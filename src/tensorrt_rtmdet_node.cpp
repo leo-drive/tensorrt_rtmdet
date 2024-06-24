@@ -23,7 +23,7 @@ namespace tensorrt_rtmdet {
 
         std::string onnxModel = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/onnx_model/end2end.onnx";
         std::string engineFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/tensorrt_model/end2end.engine";
-        std::string pluginFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/build/tensorrt_rtmdet/libTRTBatchedNMS_plugin.so";
+        std::string pluginFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/build/tensorrt_rtmdet/libtensorrt_rtmdet_plugin.so";
         std::string videoFile = "/home/bzeren/projects/labs/rtmdet/road.mp4";
         std::string outputVideoFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/output.mp4";
         std::string precision = "fp16";
@@ -32,9 +32,9 @@ namespace tensorrt_rtmdet {
             std::cerr << "Error when loading plugin" << std::endl;
         }
 
-        tensorrt_common::BuildConfig build_config (
+        tensorrt_common::BuildConfig build_config(
                 "MinMax", -1, false, false, false, 6.0
-                );
+        );
 
         const double norm_factor = 1.0;
         const std::string cache_dir = "/tmp/rtmdet";

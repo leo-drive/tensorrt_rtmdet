@@ -369,7 +369,7 @@ namespace tensorrt_rtmdet {
                 for (int m = 0; m < multitask_; m++) {
                     const auto output_dims =
                             trt_common_->getBindingDimensions(m + 2);  // 0: input, 1: output for detections
-                    const float scale = std::min
+                    const float scale = std::min(
                             output_dims.d[3] / static_cast<float>(image.cols),
                             output_dims.d[2] / static_cast<float>(image.rows));
                     int out_w = static_cast<int>(image.cols * scale);
