@@ -42,12 +42,6 @@ namespace tensorrt_rtmdet {
         int stride;
     };
 
-    typedef struct Colormap_ {
-        int id;
-        std::string name;
-        std::vector<unsigned char> color;
-    } Colormap;
-
     class TrtRTMDet {
     public:
         TrtRTMDet(const std::string &model_path, const std::string &precision, const int num_class = 8,
@@ -60,9 +54,7 @@ namespace tensorrt_rtmdet {
 
         ~TrtRTMDet();
 
-        bool doInference(
-                const std::vector<cv::Mat> &images, ObjectArrays &objects, std::vector<cv::Mat> &masks,
-                std::vector<cv::Mat> &color_masks);
+        bool doInference(const std::vector<cv::Mat> &images, ObjectArrays &objects);
 
         bool doInferenceWithRoi(
                 const std::vector<cv::Mat> &images, ObjectArrays &objects, const std::vector<cv::Rect> &roi);
@@ -74,13 +66,6 @@ namespace tensorrt_rtmdet {
 
         void printProfiling(void);
 
-        int getMultitaskNum(void);
-
-        void getColorizedMask(
-                const std::vector<tensorrt_rtmdet::Colormap> &colormap, const cv::Mat &mask,
-                cv::Mat &colorized_mask);
-
-        inline std::vector<Colormap> getColorMap() { return sematic_color_map_; }
 
     private:
         void preprocess(const std::vector<cv::Mat> &images);
@@ -103,9 +88,7 @@ namespace tensorrt_rtmdet {
 
         bool feedforward(const std::vector<cv::Mat> &images, ObjectArrays &objects);
 
-        bool feedforwardAndDecode(
-                const std::vector<cv::Mat> &images, ObjectArrays &objects, std::vector<cv::Mat> &masks,
-                std::vector<cv::Mat> &color_masks);
+        bool feedforwardAndDecode(const std::vector<cv::Mat> &images, ObjectArrays &objects);
 
         void decodeOutputs(float *prob, ObjectArray &objects, float scale, cv::Size &img_size) const;
 
@@ -137,14 +120,8 @@ namespace tensorrt_rtmdet {
         void nmsSortedBboxes(
                 const ObjectArray &face_objects, std::vector<int> &picked, float nms_threshold) const;
 
-        cv::Mat getMaskImage(float *prob, nvinfer1::Dims dims, int out_w, int out_h);
-
-        cv::Mat getMaskImageGpu(float *d_prob, nvinfer1::Dims dims, int out_w, int out_h, int b);
-
         std::unique_ptr<tensorrt_common::TrtCommon> trt_common_;
 
-
-    private:
         std::vector<float> input_h_;
         CudaUniquePtr<float[]> input_d_;
         CudaUniquePtr<float[]> out_dets_d_;
@@ -185,20 +162,6 @@ namespace tensorrt_rtmdet {
         CudaUniquePtrHost<Roi[]> roi_h_;
         // device pointer for ROI
         CudaUniquePtr<Roi[]> roi_d_;
-
-        // flag whether model has multitasks
-        int multitask_;
-        // buff size for segmentation heads
-        CudaUniquePtr<float[]> segmentation_out_prob_d_;
-        CudaUniquePtrHost<float[]> segmentation_out_prob_h_;
-        size_t segmentation_out_elem_num_;
-        size_t segmentation_out_elem_num_per_batch_;
-        std::vector<cv::Mat> segmentation_masks_;
-        // host buffer for argmax postprocessing on GPU
-        CudaUniquePtrHost<unsigned char[]> argmax_buf_h_;
-        // device buffer for argmax postprocessing  on GPU
-        CudaUniquePtr<unsigned char[]> argmax_buf_d_;
-        std::vector<tensorrt_rtmdet::Colormap> sematic_color_map_;
     };
 }
 

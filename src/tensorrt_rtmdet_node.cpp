@@ -26,7 +26,7 @@ namespace tensorrt_rtmdet {
         std::string pluginFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/build/tensorrt_rtmdet/libtensorrt_rtmdet_plugin.so";
         std::string videoFile = "/home/bzeren/projects/labs/rtmdet/road.mp4";
         std::string outputVideoFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/output.mp4";
-        std::string precision = "fp16";
+        std::string precision = "fp32";
 
         if (!loadLibrary(pluginFile.c_str())) {
             std::cerr << "Error when loading plugin" << std::endl;
@@ -56,16 +56,10 @@ namespace tensorrt_rtmdet {
             if (frame.empty())
                 break;
 
-            const auto width = frame.cols;
-            const auto height = frame.rows;
-
             tensorrt_rtmdet::ObjectArrays objects;
-            std::vector<cv::Mat> masks = {cv::Mat(cv::Size(height, width), CV_8UC1, cv::Scalar(0))};
-            std::vector<cv::Mat> color_masks = {
-                    cv::Mat(cv::Size(height, width), CV_8UC3, cv::Scalar(0, 0, 0))};
 
             std::cout << "Start inference" << std::endl;
-            if (!trt_rtmdet_->doInference({frame}, objects, masks, color_masks)) {
+            if (!trt_rtmdet_->doInference({frame}, objects)) {
                 RCLCPP_WARN(this->get_logger(), "Fail to inference");
                 return;
             }
