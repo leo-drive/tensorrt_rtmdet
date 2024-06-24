@@ -457,6 +457,8 @@ __global__ void crop_resize_bilinear_letterbox_nhwc_to_nchw32_batch_kernel(
     int f00, f01, f10, f11;
 
     int b;
+    const float mean[3] = {103.53, 116.28, 123.675};
+    const float std[3] = {57.375, 57.12, 58.395};
     for (b = 0; b < batch; b++) {
         float centroid_h, centroid_w;
         int crop_h = d_roi[b].h;
@@ -493,12 +495,13 @@ __global__ void crop_resize_bilinear_letterbox_nhwc_to_nchw32_batch_kernel(
                     centroid_w));
 
             // NCHW
-            int dst_index = w + (W * h) + (W * H * c) + b * (W * H * C);
+            int dst_index = b * (W * H * C) + (W * H * c) + (W * h) + w;
 
             dst_img[dst_index] = (float)rs;
             dst_img[dst_index] = (h >= letter_bot) ? 114.0 : dst_img[dst_index];
             dst_img[dst_index] = (w >= letter_right) ? 114.0 : dst_img[dst_index];
-            dst_img[dst_index] *= norm;
+            dst_img[dst_index] -= mean[c];
+            dst_img[dst_index] /= std[c];
         }
     }
 }

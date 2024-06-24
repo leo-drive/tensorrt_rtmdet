@@ -170,64 +170,34 @@ namespace tensorrt_rtmdet {
         score_threshold_ = 0.3;
         nms_threshold_ = 0.3;
 
+
         // GPU memory allocation
         const auto input_dims = trt_common_->getBindingDimensions(0);
         const auto input_size =
                 std::accumulate(input_dims.d + 1, input_dims.d + input_dims.nbDims, 1, std::multiplies<int>());
-        if (needs_output_decode_) {
-            const auto output_dims = trt_common_->getBindingDimensions(1);
-            input_d_ = cuda_utils::make_unique<float[]>(batch_config[2] * input_size);
-            out_elem_num_ = std::accumulate(
-                    output_dims.d + 1, output_dims.d + output_dims.nbDims, 1, std::multiplies<int>());
-            out_elem_num_ = out_elem_num_ * batch_config[2];
-            out_elem_num_per_batch_ = static_cast<int>(out_elem_num_ / batch_config[2]);
-            out_prob_d_ = cuda_utils::make_unique<float[]>(out_elem_num_);
-            out_prob_h_ = cuda_utils::make_unique_host<float[]>(out_elem_num_, cudaHostAllocPortable);
-            int w = input_dims.d[3];
-            int h = input_dims.d[2];
-            int sum_tensors = (w / 8) * (h / 8) + (w / 16) * (h / 16) + (w / 32) * (h / 32);
-            if (sum_tensors == output_dims.d[1]) {
-                // 3head (8,16,32)
-                output_strides_ = {8, 16, 32};
-            } else {
-                // 4head (8,16,32.4)
-                // last is additional head for high resolution outputs
-                output_strides_ = {8, 16, 32, 4};
-            }
-        } else {
-            std::cout << "11111   " << input_size << std::endl;
-            const auto out_scores_dims = trt_common_->getBindingDimensions(3);
-            max_detections_ = out_scores_dims.d[1];
-            input_d_ = cuda_utils::make_unique<float[]>(batch_config[2] * input_size);
-            out_dets_d_ = cuda_utils::make_unique<float[]>(batch_config[2] * 500);
-            out_labels_d_ = cuda_utils::make_unique<int32_t[]>(batch_config[2] * 100);
-            out_masks_d_ = cuda_utils::make_unique<float[]>(batch_config[2] * 640 * 640 * 100);
-        }
-        if (multitask_) {
-            // Allocate buffer for segmentation
-            segmentation_out_elem_num_ = 0;
-            for (int m = 0; m < multitask_; m++) {
-                const auto output_dims =
-                        trt_common_->getBindingDimensions(m + 2);  // 0 : input, 1 : output for detections
-                size_t out_elem_num = std::accumulate(
-                        output_dims.d + 1, output_dims.d + output_dims.nbDims, 1, std::multiplies<int>());
-                out_elem_num = out_elem_num * batch_config[2];
-                segmentation_out_elem_num_ += out_elem_num;
-            }
-            segmentation_out_elem_num_per_batch_ =
-                    static_cast<int>(segmentation_out_elem_num_ / batch_config[2]);
-            segmentation_out_prob_d_ = cuda_utils::make_unique<float[]>(segmentation_out_elem_num_);
-            segmentation_out_prob_h_ =
-                    cuda_utils::make_unique_host<float[]>(segmentation_out_elem_num_, cudaHostAllocPortable);
-        }
+
+        const auto output_det_dims = trt_common_->getBindingDimensions(1);
+
+        max_detections_ = output_det_dims.d[1];
+        input_d_ = cuda_utils::make_unique<float[]>(batch_size_ * input_size);
+        out_dets_d_ = cuda_utils::make_unique<float[]>(batch_size_ * 500);
+        out_labels_d_ = cuda_utils::make_unique<int32_t[]>(batch_size_ * 100);
+        out_masks_d_ = cuda_utils::make_unique<float[]>(batch_size_ * 640 * 640 * 100);
+
+        std::cout << "-*-*-*-*-*-*-*-*-*-*-*-" << std::endl;
+        std::cout << "batch_size: " << batch_size_ << std::endl;
+        std::cout << "input_dims: " << input_dims.d[1] << std::endl;
+        std::cout << "input_size: " << input_size << std::endl;
+        std::cout << "output_dims: " << output_det_dims.d[0] << std::endl;
+        std::cout << "output_dims: " << output_det_dims.d[1] << std::endl;
+        std::cout << "output_dims: " << output_det_dims.d[2] << std::endl;
+        std::cout << "output_dims: " << output_det_dims.d[3] << std::endl;
+        std::cout << "-*-*-*-*-*-*-*-*-*-*-*-" << std::endl;
+
         if (use_gpu_preprocess) {
             use_gpu_preprocess_ = true;
             image_buf_h_ = nullptr;
             image_buf_d_ = nullptr;
-            if (multitask_) {
-                argmax_buf_h_ = nullptr;
-                argmax_buf_d_ = nullptr;
-            }
         } else {
             use_gpu_preprocess_ = false;
         }
@@ -285,26 +255,6 @@ namespace tensorrt_rtmdet {
                         width * height * 3 * batch_size_, cudaHostAllocWriteCombined);
                 image_buf_d_ = cuda_utils::make_unique<unsigned char[]>(width * height * 3 * batch_size_);
             }
-            if (multitask_) {
-                size_t argmax_out_elem_num = 0;
-                for (int m = 0; m < multitask_; m++) {
-                    const auto output_dims =
-                            trt_common_->getBindingDimensions(m + 2);  // 0 : input, 1 : output for detections
-                    const float scale = std::min(
-                            output_dims.d[3] / static_cast<float>(width),
-                            output_dims.d[2] / static_cast<float>(height));
-                    int out_w = static_cast<int>(width * scale);
-                    int out_h = static_cast<int>(height * scale);
-                    // size_t out_elem_num = std::accumulate(
-                    // output_dims.d + 1, output_dims.d + output_dims.nbDims, 1, std::multiplies<int>());
-                    // out_elem_num = out_elem_num * batch_size_;
-                    size_t out_elem_num = out_w * out_h * batch_size_;
-                    argmax_out_elem_num += out_elem_num;
-                }
-                argmax_buf_h_ =
-                        cuda_utils::make_unique_host<unsigned char[]>(argmax_out_elem_num, cudaHostAllocPortable);
-                argmax_buf_d_ = cuda_utils::make_unique<unsigned char[]>(argmax_out_elem_num);
-            }
         }
     }
 
@@ -330,12 +280,6 @@ namespace tensorrt_rtmdet {
                     if (image_buf_d_) {
                         image_buf_d_.reset();
                     }
-                    if (argmax_buf_h_) {
-                        argmax_buf_h_.reset();
-                    }
-                    if (argmax_buf_d_) {
-                        argmax_buf_d_.reset();
-                    }
                 }
             }
             src_width_ = width;
@@ -348,7 +292,6 @@ namespace tensorrt_rtmdet {
         const float input_height = static_cast<float>(input_dims.d[2]);
         const float input_width = static_cast<float>(input_dims.d[3]);
         int b = 0;
-        size_t argmax_out_elem_num = 0;
         for (const auto &image: images) {
             if (!image_buf_h_) {
                 const float scale = std::min(input_width / image.cols, input_height / image.rows);
@@ -364,29 +307,6 @@ namespace tensorrt_rtmdet {
                     image_buf_h_.get() + index, &image.data[0],
                     image.cols * image.rows * 3 * sizeof(unsigned char));
             b++;
-
-            if (multitask_) {
-                for (int m = 0; m < multitask_; m++) {
-                    const auto output_dims =
-                            trt_common_->getBindingDimensions(m + 2);  // 0: input, 1: output for detections
-                    const float scale = std::min(
-                            output_dims.d[3] / static_cast<float>(image.cols),
-                            output_dims.d[2] / static_cast<float>(image.rows));
-                    int out_w = static_cast<int>(image.cols * scale);
-                    int out_h = static_cast<int>(image.rows * scale);
-                    argmax_out_elem_num += out_w * out_h * batch_size;
-                }
-            }
-        }
-
-        if (multitask_) {
-            if (!argmax_buf_h_) {
-                argmax_buf_h_ =
-                        cuda_utils::make_unique_host<unsigned char[]>(argmax_out_elem_num, cudaHostAllocPortable);
-            }
-            if (!argmax_buf_d_) {
-                argmax_buf_d_ = cuda_utils::make_unique<unsigned char[]>(argmax_out_elem_num);
-            }
         }
 
         // Copy into device memory
@@ -732,7 +652,7 @@ namespace tensorrt_rtmdet {
         }
     }
 
-    bool TrtRTMDet::feedforward(const std::vector<cv::Mat> &images, ObjectArrays &objects) {
+    bool TrtRTMDet::feedforward(const std::vector<cv::Mat> &images, [[maybe_unused]] ObjectArrays &objects) {
         std::vector<void *> buffers = {
                 input_d_.get(), out_dets_d_.get(), out_labels_d_.get(), out_masks_d_.get()};
 
@@ -765,7 +685,7 @@ namespace tensorrt_rtmdet {
 
         std::cout << "3333333333" << std::endl;
 
-        objects.clear();
+//        objects.clear();
 //        for (size_t i = 0; i < batch_size; ++i) {
 //            const size_t num_detection = static_cast<size_t>(out_num_detections[i]);
 //            ObjectArray object_array;
