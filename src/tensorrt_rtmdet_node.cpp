@@ -26,7 +26,7 @@ namespace tensorrt_rtmdet {
         std::string pluginFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/build/tensorrt_rtmdet/libtensorrt_rtmdet_plugin.so";
         std::string videoFile = "/home/bzeren/projects/labs/rtmdet/road.mp4";
         std::string outputVideoFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/output.mp4";
-        std::string precision = "fp32";
+        std::string precision = "fp16";
 
         if (!loadLibrary(pluginFile.c_str())) {
             std::cerr << "Error when loading plugin" << std::endl;
@@ -43,7 +43,7 @@ namespace tensorrt_rtmdet {
 
         trt_rtmdet_ = std::make_unique<tensorrt_rtmdet::TrtRTMDet>(
                 onnxModel, precision, 80, 0.3, 0.3, build_config,
-                true, "", norm_factor, cache_dir, batch_config, max_workspace_size, ""
+                false, "", norm_factor, cache_dir, batch_config, max_workspace_size, ""
         );
 
         cv::VideoCapture cap(videoFile);
@@ -70,4 +70,5 @@ namespace tensorrt_rtmdet {
 } // namespace tensorrt_rtmdet
 
 #include "rclcpp_components/register_node_macro.hpp"
+
 RCLCPP_COMPONENTS_REGISTER_NODE(tensorrt_rtmdet::TrtRTMDetNode)

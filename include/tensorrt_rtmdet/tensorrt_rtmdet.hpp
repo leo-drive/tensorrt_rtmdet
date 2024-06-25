@@ -162,6 +162,9 @@ namespace tensorrt_rtmdet {
         CudaUniquePtrHost<Roi[]> roi_h_;
         // device pointer for ROI
         CudaUniquePtr<Roi[]> roi_d_;
+
+        // Segmentation
+        std::vector<cv::Vec3b> color_map_;
     };
 }
 

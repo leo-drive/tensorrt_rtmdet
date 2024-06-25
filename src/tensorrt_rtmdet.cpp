@@ -18,6 +18,21 @@
 #include <string>
 #include <vector>
 
+
+std::vector<std::string> coco_labels = {"person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck",
+                                        "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench",
+                                        "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra",
+                                        "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
+                                        "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
+                                        "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup",
+                                        "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
+                                        "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
+                                        "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse",
+                                        "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+                                        "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
+                                        "hair drier", "toothbrush",
+};
+
 static void trimLeft(std::string &s) {
     s.erase(s.begin(), find_if(s.begin(), s.end(), [](int ch) { return !isspace(ch); }));
 }
@@ -210,10 +225,23 @@ namespace tensorrt_rtmdet {
         } else {
             use_gpu_preprocess_ = false;
         }
+
+        // Segmentation
+        int num_colors = 80;
+        color_map_ = ([num_colors]() -> std::vector<cv::Vec3b> {
+            std::vector<cv::Vec3b> colors(num_colors);
+            for (int i = 0; i < num_colors; ++i) {
+                cv::Vec3b color;
+                color[0] = rand() % 256;
+                color[1] = rand() % 256;
+                color[2] = rand() % 256;
+                colors[i] = color;
+            }
+            return colors;
+        })();
     }
 
-    TrtRTMDet::~TrtRTMDet()
-    {
+    TrtRTMDet::~TrtRTMDet() {
         if (use_gpu_preprocess_) {
             if (image_buf_h_) {
                 image_buf_h_.reset();
@@ -224,8 +252,7 @@ namespace tensorrt_rtmdet {
         }
     }
 
-    void TrtRTMDet::initPreprocessBuffer(int width, int height)
-    {
+    void TrtRTMDet::initPreprocessBuffer(int width, int height) {
         // if size of source input has been changed...
         if (src_width_ != -1 || src_height_ != -1) {
             if (width != src_width_ || height != src_height_) {
@@ -266,18 +293,16 @@ namespace tensorrt_rtmdet {
         }
     }
 
-    void TrtRTMDet::printProfiling(void)
-    {
+    void TrtRTMDet::printProfiling(void) {
         trt_common_->printProfiling();
     }
 
-    void TrtRTMDet::preprocessGpu(const std::vector<cv::Mat> & images)
-    {
+    void TrtRTMDet::preprocessGpu(const std::vector<cv::Mat> &images) {
         const auto batch_size = images.size();
         auto input_dims = trt_common_->getBindingDimensions(0);
 
         input_dims.d[0] = batch_size;
-        for (const auto & image : images) {
+        for (const auto &image: images) {
             // if size of source input has been changed...
             int width = image.cols;
             int height = image.rows;
@@ -302,7 +327,7 @@ namespace tensorrt_rtmdet {
         const float input_height = static_cast<float>(input_dims.d[2]);
         const float input_width = static_cast<float>(input_dims.d[3]);
         int b = 0;
-        for (const auto & image : images) {
+        for (const auto &image: images) {
             if (!image_buf_h_) {
                 const float scale = std::min(input_width / image.cols, input_height / image.rows);
                 scales_.emplace_back(scale);
@@ -329,8 +354,7 @@ namespace tensorrt_rtmdet {
                 images[0].rows, 3, batch_size, static_cast<float>(norm_factor_), *stream_);
     }
 
-    void TrtRTMDet::preprocess(const std::vector<cv::Mat> & images)
-    {
+    void TrtRTMDet::preprocess(const std::vector<cv::Mat> &images) {
         const auto batch_size = images.size();
         auto input_dims = trt_common_->getBindingDimensions(0);
         input_dims.d[0] = batch_size;
@@ -341,20 +365,28 @@ namespace tensorrt_rtmdet {
         scales_.clear();
         bool letterbox = true;
         if (letterbox) {
-            for (const auto & image : images) {
+            for (const auto &image: images) {
                 cv::Mat dst_image;
-                const float scale = std::min(input_width / image.cols, input_height / image.rows);
-                scales_.emplace_back(scale);
-                const auto scale_size = cv::Size(image.cols * scale, image.rows * scale);
-                cv::resize(image, dst_image, scale_size, 0, 0, cv::INTER_CUBIC);
-                const auto bottom = input_height - dst_image.rows;
-                const auto right = input_width - dst_image.cols;
-                copyMakeBorder(
-                        dst_image, dst_image, 0, bottom, 0, right, cv::BORDER_CONSTANT, {114, 114, 114});
+
+                // Wrong mask, correct labels
+//                const float scale = std::min(input_width / image.cols, input_height / image.rows);
+//                scales_.emplace_back(scale);
+//                const auto scale_size = cv::Size(image.cols * scale, image.rows * scale);
+//                cv::resize(image, dst_image, scale_size);
+//                dst_image.convertTo(dst_image, CV_32F);
+//                dst_image -= cv::Scalar(103.53, 116.28, 123.675);
+//                dst_image /= cv::Scalar(57.375, 57.12, 58.395);
+
+                // wrong labels, correct mask
+                cv::resize(image, dst_image, cv::Size(640, 640));
+                dst_image.convertTo(dst_image, CV_32F);
+                dst_image -= cv::Scalar(103.53, 116.28, 123.675);
+                dst_image /= cv::Scalar(57.375, 57.12, 58.395);
+
                 dst_images.emplace_back(dst_image);
             }
         } else {
-            for (const auto & image : images) {
+            for (const auto &image: images) {
                 cv::Mat dst_image;
                 const float scale = -1.0;
                 scales_.emplace_back(scale);
@@ -375,8 +407,7 @@ namespace tensorrt_rtmdet {
         // No Need for Sync
     }
 
-    bool TrtRTMDet::doInference(const std::vector<cv::Mat> & images, ObjectArrays & objects)
-    {
+    bool TrtRTMDet::doInference(const std::vector<cv::Mat> &images, ObjectArrays &objects) {
         if (!trt_common_->isInitialized()) {
             return false;
         }
@@ -395,13 +426,12 @@ namespace tensorrt_rtmdet {
     }
 
     void TrtRTMDet::preprocessWithRoiGpu(
-            const std::vector<cv::Mat> & images, const std::vector<cv::Rect> & rois)
-    {
+            const std::vector<cv::Mat> &images, const std::vector<cv::Rect> &rois) {
         const auto batch_size = images.size();
         auto input_dims = trt_common_->getBindingDimensions(0);
 
         input_dims.d[0] = batch_size;
-        for (const auto & image : images) {
+        for (const auto &image: images) {
             // if size of source input has been changed...
             int width = image.cols;
             int height = image.rows;
@@ -432,7 +462,7 @@ namespace tensorrt_rtmdet {
             roi_d_ = cuda_utils::make_unique<Roi[]>(batch_size);
         }
 
-        for (const auto & image : images) {
+        for (const auto &image: images) {
             const float scale = std::min(
                     input_width / static_cast<float>(rois[b].width),
                     input_height / static_cast<float>(rois[b].height));
@@ -469,8 +499,7 @@ namespace tensorrt_rtmdet {
     }
 
     void TrtRTMDet::preprocessWithRoi(
-            const std::vector<cv::Mat> & images, const std::vector<cv::Rect> & rois)
-    {
+            const std::vector<cv::Mat> &images, const std::vector<cv::Rect> &rois) {
         const auto batch_size = images.size();
         auto input_dims = trt_common_->getBindingDimensions(0);
         input_dims.d[0] = batch_size;
@@ -482,7 +511,7 @@ namespace tensorrt_rtmdet {
         bool letterbox = true;
         int b = 0;
         if (letterbox) {
-            for (const auto & image : images) {
+            for (const auto &image: images) {
                 cv::Mat dst_image;
                 cv::Mat cropped = image(rois[b]);
                 const float scale = std::min(
@@ -499,7 +528,7 @@ namespace tensorrt_rtmdet {
                 b++;
             }
         } else {
-            for (const auto & image : images) {
+            for (const auto &image: images) {
                 cv::Mat dst_image;
                 const float scale = -1.0;
                 scales_.emplace_back(scale);
@@ -520,8 +549,7 @@ namespace tensorrt_rtmdet {
         // No Need for Sync
     }
 
-    void TrtRTMDet::multiScalePreprocessGpu(const cv::Mat & image, const std::vector<cv::Rect> & rois)
-    {
+    void TrtRTMDet::multiScalePreprocessGpu(const cv::Mat &image, const std::vector<cv::Rect> &rois) {
         const auto batch_size = rois.size();
         auto input_dims = trt_common_->getBindingDimensions(0);
 
@@ -589,8 +617,7 @@ namespace tensorrt_rtmdet {
                 image.rows, 3, batch_size, static_cast<float>(norm_factor_), *stream_);
     }
 
-    void TrtRTMDet::multiScalePreprocess(const cv::Mat & image, const std::vector<cv::Rect> & rois)
-    {
+    void TrtRTMDet::multiScalePreprocess(const cv::Mat &image, const std::vector<cv::Rect> &rois) {
         const auto batch_size = rois.size();
         auto input_dims = trt_common_->getBindingDimensions(0);
         input_dims.d[0] = batch_size;
@@ -600,7 +627,7 @@ namespace tensorrt_rtmdet {
         std::vector<cv::Mat> dst_images;
         scales_.clear();
 
-        for (const auto & roi : rois) {
+        for (const auto &roi: rois) {
             cv::Mat dst_image;
             cv::Mat cropped = image(roi);
             const float scale = std::min(
@@ -626,8 +653,7 @@ namespace tensorrt_rtmdet {
     }
 
     bool TrtRTMDet::doInferenceWithRoi(
-            const std::vector<cv::Mat> & images, ObjectArrays & objects, const std::vector<cv::Rect> & rois)
-    {
+            const std::vector<cv::Mat> &images, ObjectArrays &objects, const std::vector<cv::Rect> &rois) {
         if (!trt_common_->isInitialized()) {
             return false;
         }
@@ -645,8 +671,7 @@ namespace tensorrt_rtmdet {
     }
 
     bool TrtRTMDet::doMultiScaleInference(
-            const cv::Mat & image, ObjectArrays & objects, const std::vector<cv::Rect> & rois)
-    {
+            const cv::Mat &image, ObjectArrays &objects, const std::vector<cv::Rect> &rois) {
         std::vector<cv::Mat> images;
         if (!trt_common_->isInitialized()) {
             return false;
@@ -663,10 +688,8 @@ namespace tensorrt_rtmdet {
         }
     }
 
-// This method is assumed to be called when specified YOLOX model contains
-// EfficientNMS_TRT module.
-    bool TrtRTMDet::feedforward([[maybe_unused]] const std::vector<cv::Mat> & images, [[maybe_unused]] ObjectArrays & objects)
-    {
+    bool TrtRTMDet::feedforward([[maybe_unused]] const std::vector<cv::Mat> &images,
+                                [[maybe_unused]] ObjectArrays &objects) {
         std::vector<void *> buffers = {
                 input_d_.get(), out_dets_d_.get(), out_labels_d_.get(), out_masks_d_.get()};
 
@@ -688,15 +711,65 @@ namespace tensorrt_rtmdet {
 
         cudaStreamSynchronize(*stream_);
 
+        // POST PROCESSING
+        std::vector<cv::Mat> outputMasks(100);
+        for (int i = 0; i < 100; ++i) {
+            cv::Mat mask(640, 640, CV_32F, out_masks.get() + i * 640 * 640);
+            outputMasks[i] = mask;
+        }
+
         for (int i = 0; i < 100; ++i) {
             std::cout << out_labels[i] << std::endl;
         }
 
+        cv::Mat output_image = images[0].clone();
+        for (int index = 0; index < 100; ++index) {
+            if (out_dets[(5 * index) + 4] < 0.3) {
+                continue;
+            }
+            std::cout << "score: " << out_dets[(5 * index) + 4] << std::endl;
+            std::cout << "label: " << out_labels[index] << std::endl;
+
+            cv::Mat mask = outputMasks[index];
+
+            double minVal, maxVal;
+            cv::minMaxLoc(mask, &minVal, &maxVal); // find minimum and maximum intensities
+            mask.convertTo(mask, CV_8U, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
+
+            cv::resize(mask, mask, cv::Size(output_image.cols, output_image.rows));
+
+            // Index the mask and if the value of pixel is greater than 100 make pixel blue
+            for (int i = 0; i < mask.rows; ++i) {
+                for (int j = 0; j < mask.cols; ++j) {
+                    if (mask.at<uchar>(i, j) > 200) {
+                        output_image.at<cv::Vec3b>(i, j) = color_map_[out_labels[index]];
+                    }
+                }
+            }
+
+            // Draw rectangle around the object
+            cv::rectangle(output_image,
+                          cv::Point(static_cast<int>(out_dets[(5 * index) + 0] * (1 / 0.2222222222222222)),
+                                    static_cast<int>(out_dets[(5 * index) + 1] * (1 / 0.3440860215))),
+                          cv::Point(static_cast<int>(out_dets[(5 * index) + 2] * (1 / 0.2222222222222222)),
+                                    static_cast<int>(out_dets[(5 * index) + 3] * (1 / 0.3440860215))),
+                          color_map_[out_labels[index]], 2);
+            // Write the class name
+            cv::putText(output_image, coco_labels[out_labels[index]],
+                        cv::Point(static_cast<int>(out_dets[(5 * index) + 0] * (1 / 0.2222222222222222)),
+                                  static_cast<int>(out_dets[(5 * index) + 1] * (1 / 0.3440860215))),
+                        cv::FONT_HERSHEY_SIMPLEX, 1, color_map_[out_labels[index]], 2);
+        }
+
+        cv::imshow("output", output_image);
+        cv::waitKey(2000);
+
+        // POST PROCESSING
+
         return true;
     }
 
-    bool TrtRTMDet::feedforwardAndDecode(const std::vector<cv::Mat> & images, ObjectArrays & objects)
-    {
+    bool TrtRTMDet::feedforwardAndDecode(const std::vector<cv::Mat> &images, ObjectArrays &objects) {
         std::vector<void *> buffers = {input_d_.get(), out_prob_d_.get()};
 
         trt_common_->enqueueV2(buffers.data(), *stream_, nullptr);
@@ -711,7 +784,7 @@ namespace tensorrt_rtmdet {
 
         for (size_t i = 0; i < batch_size; ++i) {
             auto image_size = images[i].size();
-            float * batch_prob = out_prob_h_.get() + (i * out_elem_num_per_batch_);
+            float *batch_prob = out_prob_h_.get() + (i * out_elem_num_per_batch_);
             ObjectArray object_array;
             decodeOutputs(batch_prob, object_array, scales_[i], image_size);
             objects.emplace_back(object_array);
@@ -721,8 +794,8 @@ namespace tensorrt_rtmdet {
 
 // This method is assumed to be called when specified YOLOX model contains
 // EfficientNMS_TRT module.
-    bool TrtRTMDet::multiScaleFeedforward([[maybe_unused]] const cv::Mat & image, int batch_size,  [[maybe_unused]] ObjectArrays & objects)
-    {
+    bool TrtRTMDet::multiScaleFeedforward([[maybe_unused]] const cv::Mat &image, int batch_size,
+                                          [[maybe_unused]] ObjectArrays &objects) {
         std::vector<void *> buffers = {
                 input_d_.get(), out_dets_d_.get(), out_labels_d_.get(), out_masks_d_.get()};
 
@@ -730,7 +803,7 @@ namespace tensorrt_rtmdet {
 
         auto out_dets = std::make_unique<float[]>(1 * 100 * 5);
         auto out_labels = std::make_unique<int32_t[]>(1 * 100);
-        auto out_masks = std::make_unique<float[]>(1 * 100 * 640 *640);
+        auto out_masks = std::make_unique<float[]>(1 * 100 * 640 * 640);
 
         CHECK_CUDA_ERROR(cudaMemcpyAsync(
                 out_dets.get(), out_dets_d_.get(), sizeof(float) * 4 * batch_size * max_detections_,
@@ -747,8 +820,7 @@ namespace tensorrt_rtmdet {
     }
 
     bool TrtRTMDet::multiScaleFeedforwardAndDecode(
-            const cv::Mat & image, int batch_size, ObjectArrays & objects)
-    {
+            const cv::Mat &image, int batch_size, ObjectArrays &objects) {
         std::vector<void *> buffers = {input_d_.get(), out_prob_d_.get()};
         trt_common_->enqueueV2(buffers.data(), *stream_, nullptr);
 
@@ -760,7 +832,7 @@ namespace tensorrt_rtmdet {
 
         for (int i = 0; i < batch_size; ++i) {
             auto image_size = image.size();
-            float * batch_prob = out_prob_h_.get() + (i * out_elem_num_per_batch_);
+            float *batch_prob = out_prob_h_.get() + (i * out_elem_num_per_batch_);
             ObjectArray object_array;
             decodeOutputs(batch_prob, object_array, scales_[i], image_size);
             objects.emplace_back(object_array);
@@ -769,8 +841,7 @@ namespace tensorrt_rtmdet {
     }
 
     void TrtRTMDet::decodeOutputs(
-            float * prob, ObjectArray & objects, float scale, cv::Size & img_size) const
-    {
+            float *prob, ObjectArray &objects, float scale, cv::Size &img_size) const {
         ObjectArray proposals;
         auto input_dims = trt_common_->getBindingDimensions(0);
         const float input_height = static_cast<float>(input_dims.d[2]);
@@ -819,10 +890,9 @@ namespace tensorrt_rtmdet {
     }
 
     void TrtRTMDet::generateGridsAndStride(
-            const int target_w, const int target_h, const std::vector<int> & strides,
-            std::vector<GridAndStride> & grid_strides) const
-    {
-        for (auto stride : strides) {
+            const int target_w, const int target_h, const std::vector<int> &strides,
+            std::vector<GridAndStride> &grid_strides) const {
+        for (auto stride: strides) {
             int num_grid_w = target_w / stride;
             int num_grid_h = target_h / stride;
             for (int g1 = 0; g1 < num_grid_h; g1++) {
@@ -834,9 +904,8 @@ namespace tensorrt_rtmdet {
     }
 
     void TrtRTMDet::generateYoloxProposals(
-            std::vector<GridAndStride> grid_strides, float * feat_blob, float prob_threshold,
-            ObjectArray & objects) const
-    {
+            std::vector<GridAndStride> grid_strides, float *feat_blob, float prob_threshold,
+            ObjectArray &objects) const {
         const int num_anchors = grid_strides.size();
 
         for (int anchor_idx = 0; anchor_idx < num_anchors; anchor_idx++) {
@@ -882,8 +951,7 @@ namespace tensorrt_rtmdet {
         }  // point anchor loop
     }
 
-    void TrtRTMDet::qsortDescentInplace(ObjectArray & face_objects, int left, int right) const
-    {
+    void TrtRTMDet::qsortDescentInplace(ObjectArray &face_objects, int left, int right) const {
         int i = left;
         int j = right;
         float p = face_objects[(left + right) / 2].score;
@@ -924,8 +992,7 @@ namespace tensorrt_rtmdet {
     }
 
     void TrtRTMDet::nmsSortedBboxes(
-            const ObjectArray & face_objects, std::vector<int> & picked, float nms_threshold) const
-    {
+            const ObjectArray &face_objects, std::vector<int> &picked, float nms_threshold) const {
         picked.clear();
         const int n = face_objects.size();
 
@@ -938,11 +1005,11 @@ namespace tensorrt_rtmdet {
         }
 
         for (int i = 0; i < n; i++) {
-            const Object & a = face_objects[i];
+            const Object &a = face_objects[i];
 
             int keep = 1;
             for (int j = 0; j < static_cast<int>(picked.size()); j++) {
-                const Object & b = face_objects[picked[j]];
+                const Object &b = face_objects[picked[j]];
 
                 // intersection over union
                 float inter_area = intersectionArea(a, b);
