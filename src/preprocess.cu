@@ -359,7 +359,7 @@ void resize_bilinear_letterbox_nhwc_to_nchw32_gpu(
 
 __global__ void resize_bilinear_letterbox_nhwc_to_nchw32_batch_kernel(
         int N, float * dst_img, unsigned char * src_img, int dst_h, int dst_w, int src_h, int src_w,
-        float scale, int letter_bot, int letter_right, float norm, int batch)
+        float scale_h, float scale_w, int letter_bot, int letter_right, float norm, int batch)
 {
     // NHWC
     int index = (blockIdx.x + blockIdx.y * gridDim.x) * blockDim.x + threadIdx.x;
@@ -374,8 +374,8 @@ __global__ void resize_bilinear_letterbox_nhwc_to_nchw32_batch_kernel(
     int w = index % W;
     int h = index / (W);
     float centroid_h, centroid_w;
-    centroid_h = scale * (float)(h + 0.5);
-    centroid_w = scale * (float)(w + 0.5);
+    centroid_h = scale_h * (float)(h + 0.5);
+    centroid_w = scale_w * (float)(w + 0.5);
 
     int f00, f01, f10, f11;
 
@@ -389,6 +389,9 @@ __global__ void resize_bilinear_letterbox_nhwc_to_nchw32_batch_kernel(
     int stride = src_w * C;
     int b_stride = src_h * src_w * C;
     int b;
+
+    const float mean[3] = {103.53, 116.28, 123.675};
+    const float std[3] = {57.375, 57.12, 58.395};
     for (b = 0; b < batch; b++) {
         for (c = 0; c < C; c++) {
             // NHWC
@@ -407,7 +410,9 @@ __global__ void resize_bilinear_letterbox_nhwc_to_nchw32_batch_kernel(
             dst_img[dst_index] = (float)rs;
             dst_img[dst_index] = (h >= letter_bot) ? 114.0 : dst_img[dst_index];
             dst_img[dst_index] = (w >= letter_right) ? 114.0 : dst_img[dst_index];
-            dst_img[dst_index] *= norm;
+//            dst_img[dst_index] *= norm;
+            dst_img[dst_index] -= mean[c];
+            dst_img[dst_index] /= std[c];
         }
     }
 }
@@ -418,13 +423,17 @@ void resize_bilinear_letterbox_nhwc_to_nchw32_batch_gpu(
 {
     int N = d_w * d_h;
     const float scale = std::min(d_w / (float)s_w, d_h / (float)s_h);
-    int r_h = scale * s_h;
-    int r_w = scale * s_w;
+
+    const float scale_h = d_h / (float)s_h;
+    const float scale_w = d_w / (float)s_w;
+
+    int r_h = scale_h * s_h;
+    int r_w = scale_w * s_w;
     float stride_h = (float)s_h / (float)r_h;
     float stride_w = (float)s_w / (float)r_w;
 
     resize_bilinear_letterbox_nhwc_to_nchw32_batch_kernel<<<cuda_gridsize(N), block, 0, stream>>>(
-            N, dst, src, d_h, d_w, s_h, s_w, 1.0 / scale, r_h, r_w, norm, batch);
+            N, dst, src, d_h, d_w, s_h, s_w, 1.0 / scale_h, 1.0 / scale_w, r_h, r_w, norm, batch);
     /*
     int b
     for (b = 0; b < batch; b++) {
