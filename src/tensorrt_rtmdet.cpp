@@ -105,7 +105,8 @@ namespace tensorrt_rtmdet {
                          const double norm_factor,
                          [[maybe_unused]] const std::string &cache_dir,
                          const tensorrt_common::BatchConfig &batch_config,
-                         const size_t max_workspace_size, [[maybe_unused]] const std::string &color_map_path) {
+                         const size_t max_workspace_size, [[maybe_unused]] const std::string &color_map_path,
+                         const std::vector<std::string> &plugin_paths) {
         RCLCPP_INFO(rclcpp::get_logger("tensorrt_rtmdet"), "tensorrt_rtmdet has been started.");
 
         src_width_ = -1;
@@ -166,10 +167,11 @@ namespace tensorrt_rtmdet {
             }
 
             trt_common_ = std::make_unique<tensorrt_common::TrtCommon>(
-                    model_path, precision, std::move(calibrator), batch_config, max_workspace_size, build_config);
+                    model_path, precision, std::move(calibrator), batch_config, max_workspace_size, build_config,
+                    plugin_paths);
         } else {
             trt_common_ = std::make_unique<tensorrt_common::TrtCommon>(
-                    model_path, precision, nullptr, batch_config, max_workspace_size, build_config);
+                    model_path, precision, nullptr, batch_config, max_workspace_size, build_config, plugin_paths);
         }
         trt_common_->setup();
 

@@ -7,15 +7,6 @@
 #include <fstream>
 #include <dlfcn.h>
 
-void *loadLibrary(const char *libPath) {
-    void *handle = dlopen(libPath, RTLD_LAZY);
-    if (!handle) {
-        std::cerr << "Cannot load library: " << dlerror() << '\n';
-        return nullptr;
-    }
-    return handle;
-}
-
 namespace tensorrt_rtmdet {
     TrtRTMDetNode::TrtRTMDetNode(const rclcpp::NodeOptions &node_options)
             : Node("tensorrt_rtmdet", node_options) {
@@ -28,10 +19,6 @@ namespace tensorrt_rtmdet {
         std::string outputVideoFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/output.mp4";
         std::string precision = "fp16";
 
-        if (!loadLibrary(pluginFile.c_str())) {
-            std::cerr << "Error when loading plugin" << std::endl;
-        }
-
         tensorrt_common::BuildConfig build_config(
                 "MinMax", -1, false, false, false, 6.0
         );
@@ -40,10 +27,11 @@ namespace tensorrt_rtmdet {
         const std::string cache_dir = "/tmp/rtmdet";
         const tensorrt_common::BatchConfig batch_config{1, 1, 1};
         const size_t max_workspace_size = (1 << 30);
+        const std::vector<std::string> plugin_paths = {pluginFile};
 
         trt_rtmdet_ = std::make_unique<tensorrt_rtmdet::TrtRTMDet>(
                 onnxModel, precision, 80, 0.3, 0.3, build_config,
-                true, "", norm_factor, cache_dir, batch_config, max_workspace_size, ""
+                true, "", norm_factor, cache_dir, batch_config, max_workspace_size, "", plugin_paths
         );
 
         cv::VideoCapture cap(videoFile);

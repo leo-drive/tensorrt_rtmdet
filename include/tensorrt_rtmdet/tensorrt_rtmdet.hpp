@@ -50,7 +50,8 @@ namespace tensorrt_rtmdet {
                   const bool use_gpu_preprocess = false, std::string calibration_image_list_file = std::string(),
                   const double norm_factor = 1.0, [[maybe_unused]] const std::string &cache_dir = "",
                   const tensorrt_common::BatchConfig &batch_config = {1, 1, 1},
-                  const size_t max_workspace_size = (1 << 30), const std::string &color_map_path = "");
+                  const size_t max_workspace_size = (1 << 30), const std::string &color_map_path = "",
+                  const std::vector<std::string> &plugin_paths = {});
 
         ~TrtRTMDet();
 
