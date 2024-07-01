@@ -713,6 +713,24 @@ namespace tensorrt_rtmdet {
 
         cudaStreamSynchronize(*stream_);
 
+
+        Detection *d_outputs;
+        cudaMalloc(&d_outputs, 100*sizeof(Detection));
+
+
+        create_detections_gpu(out_dets_d_.get(), out_labels_d_.get(), out_masks_d_.get(), 100, 0.3, d_outputs);
+
+        auto outputs = std::make_unique<Detection[]>(100);
+        cudaMemcpy(outputs.get(), d_outputs, 100*sizeof(Detection), cudaMemcpyDeviceToHost);
+
+        for (int i = 0; i < 100; ++i) {
+            if (outputs[i].score < 0.3) {
+                continue;
+            }
+            std::cout << "GPU score: " << outputs[i].score << " " << "label: " << outputs[i].label << std::endl;
+        }
+
+
         // POST PROCESSING
         std::vector<cv::Mat> outputMasks(100);
         for (int i = 0; i < 100; ++i) {
@@ -720,17 +738,12 @@ namespace tensorrt_rtmdet {
             outputMasks[i] = mask;
         }
 
-        for (int i = 0; i < 100; ++i) {
-            std::cout << out_labels[i] << std::endl;
-        }
-
         cv::Mat output_image = images[0].clone();
         for (int index = 0; index < 100; ++index) {
             if (out_dets[(5 * index) + 4] < 0.3) {
                 continue;
             }
-            std::cout << "score: " << out_dets[(5 * index) + 4] << std::endl;
-            std::cout << "label: " << out_labels[index] << std::endl;
+            std::cout << "score: " << out_dets[(5 * index) + 4] << " " << "label: " << out_labels[index] << std::endl;
 
             cv::Mat mask = outputMasks[index];
 

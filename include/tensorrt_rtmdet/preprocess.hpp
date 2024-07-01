@@ -1,7 +1,3 @@
-//
-// Created by bzeren on 14.06.2024.
-//
-
 #ifndef BUILD_PREPROCESS_HPP
 #define BUILD_PREPROCESS_HPP
 

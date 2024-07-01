@@ -6,10 +6,11 @@
 #define TENSORRT_RTMDET_TENSORRT_RTMDET_HPP
 
 #include "tensorrt_rtmdet/calibrator.hpp"
+#include "tensorrt_rtmdet/preprocess.hpp"
+#include "tensorrt_rtmdet/postprocess.hpp"
 
 #include <cuda_utils/cuda_unique_ptr.hpp>
 #include <cuda_utils/stream_unique_ptr.hpp>
-#include "tensorrt_rtmdet/preprocess.hpp"
 #include <opencv2/opencv.hpp>
 
 #include <tensorrt_common/tensorrt_common.hpp>

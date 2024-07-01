@@ -69,9 +69,21 @@ if(CMAKE_CUDA_COMPILER)
           $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
   )
 
+  # postprocess
+  cuda_add_library(${PROJECT_NAME}_gpu_postprocess
+          SHARED
+          src/postprocess.cu
+  )
+
+  target_include_directories(${PROJECT_NAME}_gpu_postprocess PUBLIC
+          $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+          $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+  )
+
   target_link_libraries(${PROJECT_NAME}
           ${tensorrt_common_LIBRARIES}
           ${PROJECT_NAME}_gpu_preprocess
+          ${PROJECT_NAME}_gpu_postprocess
           ${PROJECT_NAME}_plugin
   )
 
