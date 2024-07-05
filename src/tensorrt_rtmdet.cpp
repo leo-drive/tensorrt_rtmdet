@@ -713,24 +713,6 @@ namespace tensorrt_rtmdet {
 
         cudaStreamSynchronize(*stream_);
 
-
-        Detection *d_outputs;
-        cudaMalloc(&d_outputs, 100*sizeof(Detection));
-
-
-        create_detections_gpu(out_dets_d_.get(), out_labels_d_.get(), out_masks_d_.get(), 100, 0.3, d_outputs);
-
-        auto outputs = std::make_unique<Detection[]>(100);
-        cudaMemcpy(outputs.get(), d_outputs, 100*sizeof(Detection), cudaMemcpyDeviceToHost);
-
-        for (int i = 0; i < 100; ++i) {
-            if (outputs[i].score < 0.3) {
-                continue;
-            }
-            std::cout << "GPU score: " << outputs[i].score << " " << "label: " << outputs[i].label << std::endl;
-        }
-
-
         // POST PROCESSING
         std::vector<cv::Mat> outputMasks(100);
         for (int i = 0; i < 100; ++i) {
@@ -753,14 +735,20 @@ namespace tensorrt_rtmdet {
 
             cv::resize(mask, mask, cv::Size(output_image.cols, output_image.rows));
 
-            // Index the mask and if the value of pixel is greater than 100 make pixel blue
-            for (int i = 0; i < mask.rows; ++i) {
-                for (int j = 0; j < mask.cols; ++j) {
-                    if (mask.at<uchar>(i, j) > 200) {
-                        output_image.at<cv::Vec3b>(i, j) = color_map_[out_labels[index]];
-                    }
+            auto processPixel = [&](cv::Vec3b &pixel, const int *position) -> void {
+                int i = position[0];
+                int j = position[1];
+
+                if (mask.at<uchar>(i, j) > 200) {
+                    cv::Vec3b color(
+                            color_map_[out_labels[index]][0] * 0.5 + pixel[0] * 0.5,
+                            color_map_[out_labels[index]][1] * 0.5 + pixel[1] * 0.5,
+                            color_map_[out_labels[index]][2] * 0.5 + pixel[2] * 0.5
+                    );
+                    pixel = color;
                 }
-            }
+            };
+            output_image.forEach<cv::Vec3b>(processPixel);
 
             // Draw rectangle around the object
             cv::rectangle(output_image,
@@ -776,8 +764,10 @@ namespace tensorrt_rtmdet {
                         cv::FONT_HERSHEY_SIMPLEX, 1, color_map_[out_labels[index]], 2);
         }
 
-        cv::imshow("output", output_image);
-        cv::waitKey(2000);
+        cv::Mat resized_image;
+        cv::resize(output_image, resized_image, cv::Size(1280, 720));
+        cv::imshow("output", resized_image);
+        cv::waitKey(100);
 
         // POST PROCESSING
 
@@ -807,8 +797,6 @@ namespace tensorrt_rtmdet {
         return true;
     }
 
-// This method is assumed to be called when specified YOLOX model contains
-// EfficientNMS_TRT module.
     bool TrtRTMDet::multiScaleFeedforward([[maybe_unused]] const cv::Mat &image, int batch_size,
                                           [[maybe_unused]] ObjectArrays &objects) {
         std::vector<void *> buffers = {
