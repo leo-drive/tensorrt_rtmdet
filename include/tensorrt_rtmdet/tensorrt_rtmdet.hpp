@@ -54,7 +54,7 @@ namespace tensorrt_rtmdet {
     class TrtRTMDet {
     public:
         TrtRTMDet(const std::string &model_path, const std::string &precision, const int num_class = 8,
-                  const float score_threshold = 0.3, const float nms_threshold = 0.7,
+                  const float score_threshold = 0.3, const float nms_threshold = 0.7, const float mask_threshold = 200.0,
                   const tensorrt_common::BuildConfig build_config = tensorrt_common::BuildConfig(),
                   const bool use_gpu_preprocess = false, std::string calibration_image_list_file = std::string(),
                   const double norm_factor = 1.0, [[maybe_unused]] const std::string &cache_dir = "",
@@ -120,6 +120,7 @@ namespace tensorrt_rtmdet {
         int num_class_;
         float score_threshold_;
         float nms_threshold_;
+        float mask_threshold_;
         int batch_size_;
         CudaUniquePtrHost<float[]> out_prob_h_;
 
@@ -141,6 +142,11 @@ namespace tensorrt_rtmdet {
         CudaUniquePtrHost<Roi[]> roi_h_;
         // device pointer for ROI
         CudaUniquePtr<Roi[]> roi_d_;
+
+        // Host pointer for outputs
+        std::unique_ptr<float[]> out_dets_h_;
+        std::unique_ptr<int32_t[]> out_labels_h_;
+        std::unique_ptr<float[]> out_masks_h_;
 
         // Segmentation
         ColorMap color_map_;

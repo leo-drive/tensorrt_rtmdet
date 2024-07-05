@@ -85,7 +85,7 @@ namespace tensorrt_rtmdet {
     TrtRTMDet::TrtRTMDet(const std::string &model_path, const std::string &precision,
                          [[maybe_unused]] const int num_class,
                          [[maybe_unused]] const float score_threshold, [[maybe_unused]] const float nms_threshold,
-                         tensorrt_common::BuildConfig build_config,
+                         const float mask_threshold, tensorrt_common::BuildConfig build_config,
                          [[maybe_unused]] const bool use_gpu_preprocess, std::string calibration_image_list_path,
                          const double norm_factor,
                          [[maybe_unused]] const std::string &cache_dir,
@@ -167,6 +167,7 @@ namespace tensorrt_rtmdet {
         num_class_ = num_class;
         score_threshold_ = score_threshold;
         nms_threshold_ = nms_threshold;
+        mask_threshold_ = mask_threshold;
 
         const auto input_dims = trt_common_->getBindingDimensions(0);
         const auto out_scores_dims = trt_common_->getBindingDimensions(3);
@@ -179,6 +180,11 @@ namespace tensorrt_rtmdet {
         out_dets_d_ = cuda_utils::make_unique<float[]>(batch_size_ * max_detections_ * 5);
         out_labels_d_ = cuda_utils::make_unique<int32_t[]>(batch_size_ * max_detections_);
         out_masks_d_ = cuda_utils::make_unique<float[]>(
+                batch_size_ * max_detections_ * model_input_width_ * model_input_height_);
+
+        out_dets_h_ = std::make_unique<float[]>(batch_size_ * max_detections_ * 5);
+        out_labels_h_ = std::make_unique<int32_t[]>(batch_size_ * max_detections_);
+        out_masks_h_ = std::make_unique<float[]>(
                 batch_size_ * max_detections_ * model_input_width_ * model_input_height_);
 
         if (use_gpu_preprocess) {
@@ -563,19 +569,19 @@ namespace tensorrt_rtmdet {
         trt_common_->enqueueV2(buffers.data(), *stream_, nullptr);
 
         const auto batch_size = images.size();
-        auto out_dets = std::make_unique<float[]>(batch_size_ * max_detections_ * 5);
-        auto out_labels = std::make_unique<int32_t[]>(1 * max_detections_);
-        auto out_masks = std::make_unique<float[]>(1 * max_detections_ * model_input_width_ * model_input_height_);
+        out_dets_h_.reset(new float[batch_size_ * max_detections_ * 5]);
+        out_labels_h_.reset(new int32_t[batch_size_ * max_detections_]);
+        out_masks_h_.reset(new float[batch_size_ * 15 * model_input_width_ * model_input_height_]);
 
         CHECK_CUDA_ERROR(cudaMemcpyAsync(
-                out_dets.get(), out_dets_d_.get(), sizeof(float) * batch_size_ * max_detections_ * 5,
+                out_dets_h_.get(), out_dets_d_.get(), sizeof(float) * batch_size_ * max_detections_ * 5,
                 cudaMemcpyDeviceToHost, *stream_));
         CHECK_CUDA_ERROR(cudaMemcpyAsync(
-                out_labels.get(), out_labels_d_.get(), sizeof(int32_t) * batch_size_ * max_detections_,
+                out_labels_h_.get(), out_labels_d_.get(), sizeof(int32_t) * batch_size_ * max_detections_,
                 cudaMemcpyDeviceToHost, *stream_));
         CHECK_CUDA_ERROR(cudaMemcpyAsync(
-                out_masks.get(), out_masks_d_.get(),
-                sizeof(float) * batch_size_ * max_detections_ * model_input_width_ * model_input_height_,
+                out_masks_h_.get(), out_masks_d_.get(),
+                sizeof(float) * batch_size_ * 15 * model_input_width_ * model_input_height_,
                 cudaMemcpyDeviceToHost, *stream_));
 
         cudaStreamSynchronize(*stream_);
@@ -586,14 +592,14 @@ namespace tensorrt_rtmdet {
         for (size_t i = 0; i < batch_size; ++i) {
             cv::Mat output_image = images[i].clone();
             for (int index = 0; index < 100; ++index) {
-                if (out_dets[(5 * index) + 4] < score_threshold_) {
+                if (out_dets_h_[(5 * index) + 4] < score_threshold_) {
                     break;
                 }
-                std::cout << "score: " << out_dets[(5 * index) + 4] << " " << "label: " << out_labels[index]
+                std::cout << "score: " << out_dets_h_[(5 * index) + 4] << " " << "label: " << out_labels_h_[index]
                           << std::endl;
 
                 cv::Mat mask(model_input_width_, model_input_height_, CV_32F,
-                             out_masks.get() + index * model_input_width_ * model_input_height_);
+                             out_masks_h_.get() + index * model_input_width_ * model_input_height_);
 
                 double minVal, maxVal;
                 cv::minMaxLoc(mask, &minVal, &maxVal);
@@ -605,11 +611,11 @@ namespace tensorrt_rtmdet {
                     int i = position[0];
                     int j = position[1];
 
-                    if (mask.at<uchar>(i, j) > 200) {
+                    if (mask.at<uchar>(i, j) > static_cast<int>(mask_threshold_)) {
                         cv::Vec3b color(
-                                color_map_[out_labels[index]].color[0] * 0.5 + pixel[0] * 0.5,
-                                color_map_[out_labels[index]].color[1] * 0.5 + pixel[1] * 0.5,
-                                color_map_[out_labels[index]].color[2] * 0.5 + pixel[2] * 0.5
+                                color_map_[out_labels_h_[index]].color[0] * 0.5 + pixel[0] * 0.5,
+                                color_map_[out_labels_h_[index]].color[1] * 0.5 + pixel[1] * 0.5,
+                                color_map_[out_labels_h_[index]].color[2] * 0.5 + pixel[2] * 0.5
                         );
                         // TODO: check if color greater than 255
                         pixel = color;
@@ -619,16 +625,16 @@ namespace tensorrt_rtmdet {
 
                 // Draw rectangle around the object
                 cv::rectangle(output_image,
-                              cv::Point(static_cast<int>(out_dets[(5 * index) + 0] * (1 / scale_width_)),
-                                        static_cast<int>(out_dets[(5 * index) + 1] * (1 / scale_height_))),
-                              cv::Point(static_cast<int>(out_dets[(5 * index) + 2] * (1 / scale_width_)),
-                                        static_cast<int>(out_dets[(5 * index) + 3] * (1 / scale_height_))),
-                              color_map_[out_labels[index]].color, 2);
+                              cv::Point(static_cast<int>(out_dets_h_[(5 * index) + 0] * (1 / scale_width_)),
+                                        static_cast<int>(out_dets_h_[(5 * index) + 1] * (1 / scale_height_))),
+                              cv::Point(static_cast<int>(out_dets_h_[(5 * index) + 2] * (1 / scale_width_)),
+                                        static_cast<int>(out_dets_h_[(5 * index) + 3] * (1 / scale_height_))),
+                              color_map_[out_labels_h_[index]].color, 2);
                 // Write the class name
-                cv::putText(output_image, color_map_[out_labels[index]].label,
-                            cv::Point(static_cast<int>(out_dets[(5 * index) + 0] * (1 / scale_width_)),
-                                      static_cast<int>(out_dets[(5 * index) + 1] * (1 / scale_height_))),
-                            cv::FONT_HERSHEY_SIMPLEX, 1, color_map_[out_labels[index]].color, 2);
+                cv::putText(output_image, color_map_[out_labels_h_[index]].label,
+                            cv::Point(static_cast<int>(out_dets_h_[(5 * index) + 0] * (1 / scale_width_)),
+                                      static_cast<int>(out_dets_h_[(5 * index) + 1] * (1 / scale_height_))),
+                            cv::FONT_HERSHEY_SIMPLEX, 1, color_map_[out_labels_h_[index]].color, 2);
             }
 
             cv::Mat resized_image;
