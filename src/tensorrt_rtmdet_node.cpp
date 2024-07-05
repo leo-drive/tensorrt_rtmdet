@@ -32,7 +32,7 @@ namespace tensorrt_rtmdet {
 
         trt_rtmdet_ = std::make_unique<tensorrt_rtmdet::TrtRTMDet>(
                 onnxModel, precision, 80, 0.3, 0.3, 200.0, build_config,
-                true, "", norm_factor, cache_dir, batch_config, max_workspace_size, colorMapPath, plugin_paths
+                true, "/home/bzeren/projects/labs/data/raw/flist.txt", norm_factor, cache_dir, batch_config, max_workspace_size, colorMapPath, plugin_paths
         );
 
         cv::VideoCapture cap(videoFile);

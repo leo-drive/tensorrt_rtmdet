@@ -1,10 +1,5 @@
-//
-// Created by bzeren on 14.06.2024.
-//
-
-#ifndef BUILD_CALIBRATOR_HPP
-#define BUILD_CALIBRATOR_HPP
-
+#ifndef TENSORRT_CRTMDET__CALIBRATOR_HPP_
+#define TENSORRT_CRTMDET__CALIBRATOR_HPP_
 #include "cuda_utils/cuda_check_error.hpp"
 #include "cuda_utils/cuda_unique_ptr.hpp"
 
@@ -21,14 +16,19 @@
 #include <string>
 #include <vector>
 
-namespace tensorrt_rtmdet {
-    class ImageStream {
+namespace tensorrt_rtmdet
+{
+    class ImageStream
+    {
     public:
-        ImageStream(int batch_size, nvinfer1::Dims input_dims, const std::vector<std::string> calibration_images)
-                : batch_size_(batch_size), calibration_images_(calibration_images),
+        ImageStream(
+                int batch_size, nvinfer1::Dims input_dims, const std::vector<std::string> calibration_images)
+                : batch_size_(batch_size),
+                  calibration_images_(calibration_images),
                   current_batch_(0),
                   max_batches_(calibration_images.size() / batch_size_),
-                  input_dims_(input_dims) {
+                  input_dims_(input_dims)
+        {
             batch_.resize(batch_size_ * input_dims_.d[1] * input_dims_.d[2] * input_dims_.d[3]);
         }
 
@@ -36,53 +36,84 @@ namespace tensorrt_rtmdet {
 
         int getMaxBatches() const { return max_batches_; }
 
-        float *getBatch() { return &batch_[0]; }
+        float * getBatch() { return &batch_[0]; }
 
         nvinfer1::Dims getInputDims() { return input_dims_; }
 
-        std::vector<float> preprocess(const std::vector<cv::Mat> &images, nvinfer1::Dims input_dims, double norm) {
+        /**
+         * @brief Preprocess in calibration
+         * @param[in] images input images
+         * @param[in] input_dims input dimensions
+         * @param[in] mean mean value for each channel
+         * @param[in] std std value for each channel
+         * @return vector<float> preprocessed data
+         */
+        std::vector<float> preprocess(
+                const std::vector<cv::Mat> & images, nvinfer1::Dims input_dims, const std::vector<float> & mean,
+                const std::vector<float> & std)
+        {
             std::vector<float> input_h_;
-            const auto batch_size = images.size();
+            int batch_size = static_cast<int>(images.size());
             input_dims.d[0] = batch_size;
+            const float input_chan = static_cast<float>(input_dims.d[1]);
             const float input_height = static_cast<float>(input_dims.d[2]);
             const float input_width = static_cast<float>(input_dims.d[3]);
             std::vector<cv::Mat> dst_images;
             std::vector<float> scales_;
+            int volume = batch_size * input_chan * input_height * input_width;
             scales_.clear();
-            for (const auto &image: images) {
+            input_h_.resize(volume);
+            for (const auto & image : images) {
                 cv::Mat dst_image;
-                const float scale = std::min(input_width / image.cols, input_height / image.rows);
-                scales_.emplace_back(scale);
-                const auto scale_size = cv::Size(image.cols * scale, image.rows * scale);
-                cv::resize(image, dst_image, scale_size, 0, 0, cv::INTER_CUBIC);
-                const auto bottom = input_height - dst_image.rows;
-                const auto right = input_width - dst_image.cols;
-                copyMakeBorder(
-                        dst_image, dst_image, 0, bottom, 0, right, cv::BORDER_CONSTANT, {114, 114, 114});
+                cv::resize(image, dst_image, cv::Size(640, 640));
+                dst_image.convertTo(dst_image, CV_32F);
+                dst_image -= cv::Scalar(103.53, 116.28, 123.675);
+                dst_image /= cv::Scalar(57.375, 57.12, 58.395);
                 dst_images.emplace_back(dst_image);
             }
-            const auto chw_images =
-                    cv::dnn::blobFromImages(dst_images, norm, cv::Size(), cv::Scalar(), false, false, CV_32F);
 
-            const auto data_length = chw_images.total();
-            input_h_.reserve(data_length);
-            const auto flat = chw_images.reshape(1, data_length);
-            input_h_ = chw_images.isContinuous() ? flat : flat.clone();
+            // NHWC
+            const size_t strides_cv[4] = {
+                    static_cast<size_t>(input_width * input_chan * input_height),
+                    static_cast<size_t>(input_width * input_chan), static_cast<size_t>(input_chan), 1};
+            // NCHW
+            const size_t strides[4] = {
+                    static_cast<size_t>(input_height * input_width * input_chan),
+                    static_cast<size_t>(input_height * input_width), static_cast<size_t>(input_width), 1};
+            for (int n = 0; n < batch_size; n++) {
+                for (int h = 0; h < input_height; h++) {
+                    for (int w = 0; w < input_width; w++) {
+                        for (int c = 0; c < input_chan; c++) {
+                            // NHWC (needs RBswap)
+                            const size_t offset_cv =
+                                    h * strides_cv[1] + w * strides_cv[2] + (input_chan - c - 1) * strides_cv[3];
+                            // NCHW
+                            const size_t offset = n * strides[0] + (c)*strides[1] + h * strides[2] + w * strides[3];
+                            input_h_[offset] =
+                                    (static_cast<float>(dst_images[n].data[offset_cv]) - mean[c]) / std[c];
+                        }
+                    }
+                }
+            }
             return input_h_;
         }
 
-        bool next(double scale)
+        /**
+         * @brief Decode data in calibration
+         * @param[in] scale normalization (0.0-1.0)
+         * @return bool succ or fail
+         */
+        bool next(const std::vector<float> & mean, const std::vector<float> & std)
         {
             if (current_batch_ == max_batches_) {
                 return false;
             }
-
             for (int i = 0; i < batch_size_; ++i) {
                 auto image =
                         cv::imread(calibration_images_[batch_size_ * current_batch_ + i].c_str(), cv::IMREAD_COLOR);
                 std::cout << current_batch_ << " " << i << " Preprocess "
                           << calibration_images_[batch_size_ * current_batch_ + i].c_str() << std::endl;
-                auto input = preprocess({image}, input_dims_, scale);
+                auto input = preprocess({image}, input_dims_, mean, std);
                 batch_.insert(
                         batch_.begin() + i * input_dims_.d[1] * input_dims_.d[2] * input_dims_.d[3], input.begin(),
                         input.end());
@@ -91,7 +122,9 @@ namespace tensorrt_rtmdet {
             ++current_batch_;
             return true;
         }
-
+        /**
+         * @brief Reset calibration
+         */
         void reset() { current_batch_ = 0; }
 
     private:
@@ -103,12 +136,21 @@ namespace tensorrt_rtmdet {
         std::vector<float> batch_;
     };
 
+/**Percentile calibration using legacy calibrator*/
+/**
+ * @class Int8LegacyCalibrator
+ * @brief Calibrator for Percentile
+ * @warning We are confirming bug on Tegra like Xavier and Orin. We recommend use EntropyV2 or
+ * MinMax calibrator
+ */
     class Int8LegacyCalibrator : public nvinfer1::IInt8LegacyCalibrator
     {
     public:
         Int8LegacyCalibrator(
                 ImageStream & stream, const std::string calibration_cache_file,
-                const std::string histogram_cache_file, double scale = 1.0, bool read_cache = true,
+                const std::string histogram_cache_file,
+                const std::vector<float> & mean = {123.675, 116.28, 103.53},
+                const std::vector<float> & std = {58.395, 57.12, 57.375}, bool read_cache = true,
                 double quantile = 0.999999, double cutoff = 0.999999)
                 : stream_(stream),
                   calibration_cache_file_(calibration_cache_file),
@@ -118,9 +160,10 @@ namespace tensorrt_rtmdet {
             auto d = stream_.getInputDims();
             input_count_ = stream_.getBatchSize() * d.d[1] * d.d[2] * d.d[3];
             CHECK_CUDA_ERROR(cudaMalloc(&device_input_, input_count_ * sizeof(float)));
-            scale_ = scale;
-            quantile_ = quantile;
-            cutoff_ = cutoff;
+            m_std = std;
+            m_mean = mean;
+            m_quantile = quantile;
+            m_cutoff = cutoff;
             auto algType = getAlgorithm();
             switch (algType) {
                 case (nvinfer1::CalibrationAlgoType::kLEGACY_CALIBRATION):
@@ -149,7 +192,7 @@ namespace tensorrt_rtmdet {
             (void)names;
             (void)nb_bindings;
 
-            if (!stream_.next(scale_)) {
+            if (!stream_.next(m_mean, m_std)) {
                 return false;
             }
             try {
@@ -190,14 +233,14 @@ namespace tensorrt_rtmdet {
 
         double getQuantile() const noexcept
         {
-            printf("Quantile %f\n", quantile_);
-            return quantile_;
+            printf("Quantile %f\n", m_quantile);
+            return m_quantile;
         }
 
         double getRegressionCutoff(void) const noexcept
         {
-            printf("Cutoff %f\n", cutoff_);
-            return cutoff_;
+            printf("Cutoff %f\n", m_cutoff);
+            return m_cutoff;
         }
 
         const void * readHistogramCache(std::size_t & length) noexcept
@@ -234,23 +277,34 @@ namespace tensorrt_rtmdet {
         void * device_input_{nullptr};
         std::vector<char> calib_cache_;
         std::vector<char> hist_cache_;
-        double scale_;
-        double quantile_;
-        double cutoff_;
+        // mean for preprocessing
+        std::vector<float> m_mean;
+        // std for preprocessing
+        std::vector<float> m_std;
+        double m_quantile;
+        double m_cutoff;
     };
 
+/**
+ * @class Int8LegacyCalibrator
+ * @brief Calibrator for Percentile
+ *
+ */
     class Int8EntropyCalibrator : public nvinfer1::IInt8EntropyCalibrator2
     {
     public:
         Int8EntropyCalibrator(
-                ImageStream & stream, const std::string calibration_cache_file, double scale = 1.0,
-                bool read_cache = true)
+                ImageStream & stream, const std::string calibration_cache_file,
+                const std::vector<float> & mean = {123.675, 116.28, 103.53},
+                const std::vector<float> & std = {58.395, 57.12, 57.375}, bool read_cache = true)
                 : stream_(stream), calibration_cache_file_(calibration_cache_file), read_cache_(read_cache)
         {
             auto d = stream_.getInputDims();
             input_count_ = stream_.getBatchSize() * d.d[1] * d.d[2] * d.d[3];
+            m_std = std;
+            m_mean = mean;
+
             CHECK_CUDA_ERROR(cudaMalloc(&device_input_, input_count_ * sizeof(float)));
-            scale_ = scale;
             auto algType = getAlgorithm();
             switch (algType) {
                 case (nvinfer1::CalibrationAlgoType::kLEGACY_CALIBRATION):
@@ -279,7 +333,7 @@ namespace tensorrt_rtmdet {
             (void)names;
             (void)nb_bindings;
 
-            if (!stream_.next(scale_)) {
+            if (!stream_.next(m_mean, m_std)) {
                 return false;
             }
             try {
@@ -326,21 +380,31 @@ namespace tensorrt_rtmdet {
         void * device_input_{nullptr};
         std::vector<char> calib_cache_;
         std::vector<char> hist_cache_;
-        double scale_;
+        // mean for preprocessing
+        std::vector<float> m_mean;
+        // std for preprocessing
+        std::vector<float> m_std;
     };
 
+/**
+ * @class Int8MinMaxCalibrator
+ * @brief Calibrator for MinMax
+ *
+ */
     class Int8MinMaxCalibrator : public nvinfer1::IInt8MinMaxCalibrator
     {
     public:
         Int8MinMaxCalibrator(
-                ImageStream & stream, const std::string calibration_cache_file, double scale = 1.0,
-                bool read_cache = true)
+                ImageStream & stream, const std::string calibration_cache_file,
+                const std::vector<float> & mean = {123.675, 116.28, 103.53},
+                const std::vector<float> & std = {58.395, 57.12, 57.375}, bool read_cache = true)
                 : stream_(stream), calibration_cache_file_(calibration_cache_file), read_cache_(read_cache)
         {
             auto d = stream_.getInputDims();
             input_count_ = stream_.getBatchSize() * d.d[1] * d.d[2] * d.d[3];
+            m_std = std;
+            m_mean = mean;
             CHECK_CUDA_ERROR(cudaMalloc(&device_input_, input_count_ * sizeof(float)));
-            scale_ = scale;
             auto algType = getAlgorithm();
             switch (algType) {
                 case (nvinfer1::CalibrationAlgoType::kLEGACY_CALIBRATION):
@@ -369,7 +433,7 @@ namespace tensorrt_rtmdet {
             (void)names;
             (void)nb_bindings;
 
-            if (!stream_.next(scale_)) {
+            if (!stream_.next(m_mean, m_std)) {
                 return false;
             }
             try {
@@ -416,8 +480,9 @@ namespace tensorrt_rtmdet {
         void * device_input_{nullptr};
         std::vector<char> calib_cache_;
         std::vector<char> hist_cache_;
-        double scale_;
+        std::vector<float> m_mean;
+        std::vector<float> m_std;
     };
-}
+}  // namespace tensorrt_rtmdet
 
-#endif //BUILD_CALIBRATOR_HPP
+#endif  // TENSORRT_RTMDET__CALIBRATOR_HPP_

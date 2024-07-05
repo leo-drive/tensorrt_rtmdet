@@ -83,34 +83,25 @@ std::vector<std::string> loadImageList(const std::string &filename, const std::s
 
 namespace tensorrt_rtmdet {
     TrtRTMDet::TrtRTMDet(const std::string &model_path, const std::string &precision,
-                         [[maybe_unused]] const int num_class,
-                         [[maybe_unused]] const float score_threshold, [[maybe_unused]] const float nms_threshold,
+                         const int num_class,
+                         const float score_threshold, [[maybe_unused]] const float nms_threshold,
                          const float mask_threshold, tensorrt_common::BuildConfig build_config,
-                         [[maybe_unused]] const bool use_gpu_preprocess, std::string calibration_image_list_path,
+                         const bool use_gpu_preprocess, std::string calibration_image_list_path,
                          const double norm_factor,
                          [[maybe_unused]] const std::string &cache_dir,
                          const tensorrt_common::BatchConfig &batch_config,
-                         const size_t max_workspace_size, [[maybe_unused]] const std::string &color_map_path,
+                         const size_t max_workspace_size, const std::string &color_map_path,
                          const std::vector<std::string> &plugin_paths) {
-        RCLCPP_INFO(rclcpp::get_logger("tensorrt_rtmdet"), "tensorrt_rtmdet has been started.");
-
         src_width_ = -1;
         src_height_ = -1;
         norm_factor_ = norm_factor;
         batch_size_ = batch_config[2];
-        if (precision == "int8") {
-            if (build_config.clip_value <= 0.0) {
-                if (calibration_image_list_path.empty()) {
-                    throw std::runtime_error(
-                            "calibration_image_list_path should be passed to generate int8 engine "
-                            "or specify values larger than zero to clip_value.");
-                }
-            } else {
-                // if clip value is larger than zero, calibration file is not needed
-                calibration_image_list_path = "";
-            }
 
-            int max_batch_size = batch_size_;
+        const std::vector<float> & mean_ = {103.53, 116.28, 123.675};
+        const std::vector<float> & std_ = {57.375, 57.12, 58.395};
+
+        if (precision == "int8") {
+            int max_batch_size = batch_config[2];
             nvinfer1::Dims input_dims = tensorrt_common::get_input_dims(model_path);
             std::vector<std::string> calibration_images;
             if (calibration_image_list_path != "") {
@@ -128,7 +119,6 @@ namespace tensorrt_rtmdet {
             } else {
                 ext = "MinMax-";
             }
-
             ext += "calibration.table";
             calibration_table.replace_extension(ext);
             fs::path histogram_table{model_path};
@@ -138,22 +128,19 @@ namespace tensorrt_rtmdet {
             std::unique_ptr<nvinfer1::IInt8Calibrator> calibrator;
             if (build_config.calib_type_str == "Entropy") {
                 calibrator.reset(
-                        new tensorrt_rtmdet::Int8EntropyCalibrator(stream, calibration_table, norm_factor_));
-
+                        new tensorrt_rtmdet::Int8EntropyCalibrator(stream, calibration_table, mean_, std_));
             } else if (
                     build_config.calib_type_str == "Legacy" || build_config.calib_type_str == "Percentile") {
-                const double quantile = 0.999999;
-                const double cutoff = 0.999999;
+                double quantile = 0.999999;
+                double cutoff = 0.999999;
                 calibrator.reset(new tensorrt_rtmdet::Int8LegacyCalibrator(
-                        stream, calibration_table, histogram_table, norm_factor_, true, quantile, cutoff));
+                        stream, calibration_table, histogram_table, mean_, std_, true, quantile, cutoff));
             } else {
                 calibrator.reset(
-                        new tensorrt_rtmdet::Int8MinMaxCalibrator(stream, calibration_table, norm_factor_));
+                        new tensorrt_rtmdet::Int8MinMaxCalibrator(stream, calibration_table, mean_, std_));
             }
-
             trt_common_ = std::make_unique<tensorrt_common::TrtCommon>(
-                    model_path, precision, std::move(calibrator), batch_config, max_workspace_size, build_config,
-                    plugin_paths);
+                    model_path, precision, std::move(calibrator), batch_config, max_workspace_size, build_config, plugin_paths);
         } else {
             trt_common_ = std::make_unique<tensorrt_common::TrtCommon>(
                     model_path, precision, nullptr, batch_config, max_workspace_size, build_config, plugin_paths);
@@ -282,7 +269,7 @@ namespace tensorrt_rtmdet {
         if (letterbox) {
             for (const auto &image: images) {
                 cv::Mat dst_image;
-                cv::resize(image, dst_image, cv::Size(640, 640));
+                cv::resize(image, dst_image, cv::Size(model_input_width_, model_input_height_));
                 dst_image.convertTo(dst_image, CV_32F);
                 dst_image -= cv::Scalar(103.53, 116.28, 123.675);
                 dst_image /= cv::Scalar(57.375, 57.12, 58.395);
@@ -591,7 +578,7 @@ namespace tensorrt_rtmdet {
         // VISUALIZATION
         for (size_t i = 0; i < batch_size; ++i) {
             cv::Mat output_image = images[i].clone();
-            for (int index = 0; index < 100; ++index) {
+            for (int index = 0; index < max_detections_; ++index) {
                 if (out_dets_h_[(5 * index) + 4] < score_threshold_) {
                     break;
                 }
