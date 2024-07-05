@@ -15,6 +15,7 @@ namespace tensorrt_rtmdet {
         std::string onnxModel = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/onnx_model/end2end.onnx";
         std::string engineFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/tensorrt_model/end2end.engine";
         std::string pluginFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/build/tensorrt_rtmdet/libtensorrt_rtmdet_plugin.so";
+        std::string colorMapPath = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/onnx_model/color_map.csv";
         std::string videoFile = "/home/bzeren/projects/labs/rtmdet/road.mp4";
         std::string outputVideoFile = "/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/output.mp4";
         std::string precision = "fp16";
@@ -31,7 +32,7 @@ namespace tensorrt_rtmdet {
 
         trt_rtmdet_ = std::make_unique<tensorrt_rtmdet::TrtRTMDet>(
                 onnxModel, precision, 80, 0.3, 0.3, build_config,
-                true, "", norm_factor, cache_dir, batch_config, max_workspace_size, "", plugin_paths
+                true, "", norm_factor, cache_dir, batch_config, max_workspace_size, colorMapPath, plugin_paths
         );
 
         cv::VideoCapture cap(videoFile);

@@ -172,11 +172,14 @@ namespace tensorrt_rtmdet {
         const auto out_scores_dims = trt_common_->getBindingDimensions(3);
 
         max_detections_ = out_scores_dims.d[1];
+        model_input_height_ = input_dims.d[2];
+        model_input_width_ = input_dims.d[3];
+
         input_d_ = cuda_utils::make_unique<float[]>(batch_size_ * input_dims.d[1] * input_dims.d[2] * input_dims.d[3]);
         out_dets_d_ = cuda_utils::make_unique<float[]>(batch_size_ * max_detections_ * 5);
         out_labels_d_ = cuda_utils::make_unique<int32_t[]>(batch_size_ * max_detections_);
         out_masks_d_ = cuda_utils::make_unique<float[]>(
-                batch_size_ * max_detections_ * input_dims.d[2] * input_dims.d[3]);
+                batch_size_ * max_detections_ * model_input_width_ * model_input_height_);
 
         if (use_gpu_preprocess) {
             use_gpu_preprocess_ = true;
@@ -187,7 +190,7 @@ namespace tensorrt_rtmdet {
         }
 
         // Segmentation
-        readColorMap("/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/onnx_model/color_map.csv");
+        readColorMap(color_map_path);
     }
 
     TrtRTMDet::~TrtRTMDet() {
@@ -197,47 +200,6 @@ namespace tensorrt_rtmdet {
             }
             if (image_buf_d_) {
                 image_buf_d_.reset();
-            }
-        }
-    }
-
-    void TrtRTMDet::initPreprocessBuffer(int width, int height) {
-        // if size of source input has been changed...
-        if (src_width_ != -1 || src_height_ != -1) {
-            if (width != src_width_ || height != src_height_) {
-                // Free cuda memory to reallocate
-                if (image_buf_h_) {
-                    image_buf_h_.reset();
-                }
-                if (image_buf_d_) {
-                    image_buf_d_.reset();
-                }
-            }
-        }
-        src_width_ = width;
-        src_height_ = height;
-        if (use_gpu_preprocess_) {
-            auto input_dims = trt_common_->getBindingDimensions(0);
-            bool const hasRuntimeDim = std::any_of(
-                    input_dims.d, input_dims.d + input_dims.nbDims,
-                    [](int32_t input_dim) { return input_dim == -1; });
-            if (hasRuntimeDim) {
-                input_dims.d[0] = batch_size_;
-            }
-            if (!image_buf_h_) {
-                trt_common_->setBindingDimensions(0, input_dims);
-                scales_.clear();
-            }
-            const float input_height = static_cast<float>(input_dims.d[2]);
-            const float input_width = static_cast<float>(input_dims.d[3]);
-            if (!image_buf_h_) {
-                const float scale = std::min(input_width / width, input_height / height);
-                for (int b = 0; b < batch_size_; b++) {
-                    scales_.emplace_back(scale);
-                }
-                image_buf_h_ = cuda_utils::make_unique_host<unsigned char[]>(
-                        width * height * 3 * batch_size_, cudaHostAllocWriteCombined);
-                image_buf_d_ = cuda_utils::make_unique<unsigned char[]>(width * height * 3 * batch_size_);
             }
         }
     }
@@ -271,15 +233,16 @@ namespace tensorrt_rtmdet {
         }
         if (!image_buf_h_) {
             trt_common_->setBindingDimensions(0, input_dims);
-            scales_.clear();
+            scale_width_ = 0;
+            scale_height_ = 0;
         }
         const float input_height = static_cast<float>(input_dims.d[2]);
         const float input_width = static_cast<float>(input_dims.d[3]);
         int b = 0;
         for (const auto &image: images) {
             if (!image_buf_h_) {
-                const float scale = std::min(input_width / image.cols, input_height / image.rows);
-                scales_.emplace_back(scale);
+                scale_width_ = input_width / image.cols;
+                scale_height_ = input_height / image.rows;
                 image_buf_h_ = cuda_utils::make_unique_host<unsigned char[]>(
                         image.cols * image.rows * 3 * batch_size, cudaHostAllocWriteCombined);
                 image_buf_d_ =
@@ -308,38 +271,21 @@ namespace tensorrt_rtmdet {
         auto input_dims = trt_common_->getBindingDimensions(0);
         input_dims.d[0] = batch_size;
         trt_common_->setBindingDimensions(0, input_dims);
-        const float input_height = static_cast<float>(input_dims.d[2]);
-        const float input_width = static_cast<float>(input_dims.d[3]);
         std::vector<cv::Mat> dst_images;
-        scales_.clear();
         bool letterbox = true;
         if (letterbox) {
             for (const auto &image: images) {
                 cv::Mat dst_image;
-
-                // Wrong mask, correct labels
-//                const float scale = std::min(input_width / image.cols, input_height / image.rows);
-//                scales_.emplace_back(scale);
-//                const auto scale_size = cv::Size(image.cols * scale, image.rows * scale);
-//                cv::resize(image, dst_image, scale_size);
-//                dst_image.convertTo(dst_image, CV_32F);
-//                dst_image -= cv::Scalar(103.53, 116.28, 123.675);
-//                dst_image /= cv::Scalar(57.375, 57.12, 58.395);
-
-                // wrong labels, correct mask
                 cv::resize(image, dst_image, cv::Size(640, 640));
                 dst_image.convertTo(dst_image, CV_32F);
                 dst_image -= cv::Scalar(103.53, 116.28, 123.675);
                 dst_image /= cv::Scalar(57.375, 57.12, 58.395);
-
                 dst_images.emplace_back(dst_image);
             }
         } else {
             for (const auto &image: images) {
                 cv::Mat dst_image;
-                const float scale = -1.0;
-                scales_.emplace_back(scale);
-                const auto scale_size = cv::Size(input_width, input_height);
+                const auto scale_size = cv::Size(model_input_width_, model_input_height_);
                 cv::resize(image, dst_image, scale_size, 0, 0, cv::INTER_CUBIC);
                 dst_images.emplace_back(dst_image);
             }
@@ -399,7 +345,6 @@ namespace tensorrt_rtmdet {
         const float input_height = static_cast<float>(input_dims.d[2]);
         const float input_width = static_cast<float>(input_dims.d[3]);
         int b = 0;
-        scales_.clear();
 
         if (!roi_h_) {
             roi_h_ = cuda_utils::make_unique_host<Roi[]>(batch_size, cudaHostAllocWriteCombined);
@@ -407,10 +352,8 @@ namespace tensorrt_rtmdet {
         }
 
         for (const auto &image: images) {
-            const float scale = std::min(
-                    input_width / static_cast<float>(rois[b].width),
-                    input_height / static_cast<float>(rois[b].height));
-            scales_.emplace_back(scale);
+            scale_width_ = input_width / static_cast<float>(rois[b].width);
+            scale_height_ = input_height / static_cast<float>(rois[b].height);
             if (!image_buf_h_) {
                 image_buf_h_ = cuda_utils::make_unique_host<unsigned char[]>(
                         image.cols * image.rows * 3 * batch_size, cudaHostAllocWriteCombined);
@@ -451,18 +394,15 @@ namespace tensorrt_rtmdet {
         const float input_height = static_cast<float>(input_dims.d[2]);
         const float input_width = static_cast<float>(input_dims.d[3]);
         std::vector<cv::Mat> dst_images;
-        scales_.clear();
         bool letterbox = true;
         int b = 0;
         if (letterbox) {
             for (const auto &image: images) {
                 cv::Mat dst_image;
                 cv::Mat cropped = image(rois[b]);
-                const float scale = std::min(
-                        input_width / static_cast<float>(rois[b].width),
-                        input_height / static_cast<float>(rois[b].height));
-                scales_.emplace_back(scale);
-                const auto scale_size = cv::Size(rois[b].width * scale, rois[b].height * scale);
+                scale_width_ = input_width / static_cast<float>(rois[b].width);
+                scale_height_ = input_height / static_cast<float>(rois[b].height);
+                const auto scale_size = cv::Size(rois[b].width * scale_width_, rois[b].height * scale_height_);
                 cv::resize(cropped, dst_image, scale_size, 0, 0, cv::INTER_CUBIC);
                 const auto bottom = input_height - dst_image.rows;
                 const auto right = input_width - dst_image.cols;
@@ -474,9 +414,7 @@ namespace tensorrt_rtmdet {
         } else {
             for (const auto &image: images) {
                 cv::Mat dst_image;
-                const float scale = -1.0;
-                scales_.emplace_back(scale);
-                const auto scale_size = cv::Size(input_width, input_height);
+                const auto scale_size = cv::Size(model_input_width_, model_input_height_);
                 cv::resize(image, dst_image, scale_size, 0, 0, cv::INTER_CUBIC);
                 dst_images.emplace_back(dst_image);
             }
@@ -522,18 +460,14 @@ namespace tensorrt_rtmdet {
         const float input_height = static_cast<float>(input_dims.d[2]);
         const float input_width = static_cast<float>(input_dims.d[3]);
 
-        scales_.clear();
-
         if (!roi_h_) {
             roi_h_ = cuda_utils::make_unique_host<Roi[]>(batch_size, cudaHostAllocWriteCombined);
             roi_d_ = cuda_utils::make_unique<Roi[]>(batch_size);
         }
 
         for (size_t b = 0; b < rois.size(); b++) {
-            const float scale = std::min(
-                    input_width / static_cast<float>(rois[b].width),
-                    input_height / static_cast<float>(rois[b].height));
-            scales_.emplace_back(scale);
+            scale_width_ = input_width / static_cast<float>(rois[b].width);
+            scale_height_ = input_height / static_cast<float>(rois[b].height);
             roi_h_[b].x = rois[b].x;
             roi_h_[b].y = rois[b].y;
             roi_h_[b].w = rois[b].width;
@@ -569,15 +503,13 @@ namespace tensorrt_rtmdet {
         const float input_height = static_cast<float>(input_dims.d[2]);
         const float input_width = static_cast<float>(input_dims.d[3]);
         std::vector<cv::Mat> dst_images;
-        scales_.clear();
 
         for (const auto &roi: rois) {
             cv::Mat dst_image;
             cv::Mat cropped = image(roi);
-            const float scale = std::min(
-                    input_width / static_cast<float>(roi.width), input_height / static_cast<float>(roi.height));
-            scales_.emplace_back(scale);
-            const auto scale_size = cv::Size(roi.width * scale, roi.height * scale);
+            scale_width_ = input_width / static_cast<float>(roi.width);
+            scale_height_ = input_height / static_cast<float>(roi.height);
+            const auto scale_size = cv::Size(roi.width * scale_width_, roi.height * scale_height_);
             cv::resize(cropped, dst_image, scale_size, 0, 0, cv::INTER_CUBIC);
             const auto bottom = input_height - dst_image.rows;
             const auto right = input_width - dst_image.cols;
@@ -630,77 +562,81 @@ namespace tensorrt_rtmdet {
 
         trt_common_->enqueueV2(buffers.data(), *stream_, nullptr);
 
-        auto out_dets = std::make_unique<float[]>(1 * 100 * 5);
-        auto out_labels = std::make_unique<int32_t[]>(1 * 100);
-        auto out_masks = std::make_unique<float[]>(1 * 100 * 640 * 640);
+        const auto batch_size = images.size();
+        auto out_dets = std::make_unique<float[]>(batch_size_ * max_detections_ * 5);
+        auto out_labels = std::make_unique<int32_t[]>(1 * max_detections_);
+        auto out_masks = std::make_unique<float[]>(1 * max_detections_ * model_input_width_ * model_input_height_);
 
         CHECK_CUDA_ERROR(cudaMemcpyAsync(
-                out_dets.get(), out_dets_d_.get(), sizeof(float) * 1 * 100 * 5,
+                out_dets.get(), out_dets_d_.get(), sizeof(float) * batch_size_ * max_detections_ * 5,
                 cudaMemcpyDeviceToHost, *stream_));
         CHECK_CUDA_ERROR(cudaMemcpyAsync(
-                out_labels.get(), out_labels_d_.get(), sizeof(int32_t) * 1 * 100,
+                out_labels.get(), out_labels_d_.get(), sizeof(int32_t) * batch_size_ * max_detections_,
                 cudaMemcpyDeviceToHost, *stream_));
         CHECK_CUDA_ERROR(cudaMemcpyAsync(
-                out_masks.get(), out_masks_d_.get(), sizeof(float) * 1 * 100 * 640 * 640,
+                out_masks.get(), out_masks_d_.get(),
+                sizeof(float) * batch_size_ * max_detections_ * model_input_width_ * model_input_height_,
                 cudaMemcpyDeviceToHost, *stream_));
 
         cudaStreamSynchronize(*stream_);
 
         // POST PROCESSING
 
-
         // VISUALIZATION
-        cv::Mat output_image = images[0].clone();
-        for (int index = 0; index < 100; ++index) {
-            if (out_dets[(5 * index) + 4] < 0.3) {
-                continue;
-            }
-            std::cout << "score: " << out_dets[(5 * index) + 4] << " " << "label: " << out_labels[index] << std::endl;
-
-            cv::Mat mask(640, 640, CV_32F, out_masks.get() + index * 640 * 640);
-
-            double minVal, maxVal;
-            cv::minMaxLoc(mask, &minVal, &maxVal); // find minimum and maximum intensities
-            mask.convertTo(mask, CV_8U, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
-
-            cv::resize(mask, mask, cv::Size(output_image.cols, output_image.rows));
-
-            auto processPixel = [&](cv::Vec3b &pixel, const int *position) -> void {
-                int i = position[0];
-                int j = position[1];
-
-                if (mask.at<uchar>(i, j) > 200) {
-                    cv::Vec3b color(
-                            color_map_[out_labels[index]].color[0] * 0.5 + pixel[0] * 0.5,
-                            color_map_[out_labels[index]].color[1] * 0.5 + pixel[1] * 0.5,
-                            color_map_[out_labels[index]].color[2] * 0.5 + pixel[2] * 0.5
-                    );
-                    // TODO: check if color greater than 255
-                    pixel = color;
+        for (size_t i = 0; i < batch_size; ++i) {
+            cv::Mat output_image = images[i].clone();
+            for (int index = 0; index < 100; ++index) {
+                if (out_dets[(5 * index) + 4] < score_threshold_) {
+                    break;
                 }
-            };
-            output_image.forEach<cv::Vec3b>(processPixel);
+                std::cout << "score: " << out_dets[(5 * index) + 4] << " " << "label: " << out_labels[index]
+                          << std::endl;
 
-            // Draw rectangle around the object
-            cv::rectangle(output_image,
-                          cv::Point(static_cast<int>(out_dets[(5 * index) + 0] * (1 / 0.2222222222222222)),
-                                    static_cast<int>(out_dets[(5 * index) + 1] * (1 / 0.3440860215))),
-                          cv::Point(static_cast<int>(out_dets[(5 * index) + 2] * (1 / 0.2222222222222222)),
-                                    static_cast<int>(out_dets[(5 * index) + 3] * (1 / 0.3440860215))),
-                          color_map_[out_labels[index]].color, 2);
-            // Write the class name
-            cv::putText(output_image, color_map_[out_labels[index]].label,
-                        cv::Point(static_cast<int>(out_dets[(5 * index) + 0] * (1 / 0.2222222222222222)),
-                                  static_cast<int>(out_dets[(5 * index) + 1] * (1 / 0.3440860215))),
-                        cv::FONT_HERSHEY_SIMPLEX, 1, color_map_[out_labels[index]].color, 2);
+                cv::Mat mask(model_input_width_, model_input_height_, CV_32F,
+                             out_masks.get() + index * model_input_width_ * model_input_height_);
+
+                double minVal, maxVal;
+                cv::minMaxLoc(mask, &minVal, &maxVal);
+                mask.convertTo(mask, CV_8U, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
+
+                cv::resize(mask, mask, cv::Size(output_image.cols, output_image.rows));
+
+                auto processPixel = [&](cv::Vec3b &pixel, const int *position) -> void {
+                    int i = position[0];
+                    int j = position[1];
+
+                    if (mask.at<uchar>(i, j) > 200) {
+                        cv::Vec3b color(
+                                color_map_[out_labels[index]].color[0] * 0.5 + pixel[0] * 0.5,
+                                color_map_[out_labels[index]].color[1] * 0.5 + pixel[1] * 0.5,
+                                color_map_[out_labels[index]].color[2] * 0.5 + pixel[2] * 0.5
+                        );
+                        // TODO: check if color greater than 255
+                        pixel = color;
+                    }
+                };
+                output_image.forEach<cv::Vec3b>(processPixel);
+
+                // Draw rectangle around the object
+                cv::rectangle(output_image,
+                              cv::Point(static_cast<int>(out_dets[(5 * index) + 0] * (1 / scale_width_)),
+                                        static_cast<int>(out_dets[(5 * index) + 1] * (1 / scale_height_))),
+                              cv::Point(static_cast<int>(out_dets[(5 * index) + 2] * (1 / scale_width_)),
+                                        static_cast<int>(out_dets[(5 * index) + 3] * (1 / scale_height_))),
+                              color_map_[out_labels[index]].color, 2);
+                // Write the class name
+                cv::putText(output_image, color_map_[out_labels[index]].label,
+                            cv::Point(static_cast<int>(out_dets[(5 * index) + 0] * (1 / scale_width_)),
+                                      static_cast<int>(out_dets[(5 * index) + 1] * (1 / scale_height_))),
+                            cv::FONT_HERSHEY_SIMPLEX, 1, color_map_[out_labels[index]].color, 2);
+            }
+
+            cv::Mat resized_image;
+            cv::resize(output_image, resized_image, cv::Size(1280, 720));
+            cv::imshow("output", resized_image);
+            cv::waitKey(1);
+
         }
-
-        cv::Mat resized_image;
-        cv::resize(output_image, resized_image, cv::Size(1280, 720));
-        cv::imshow("output", resized_image);
-        cv::waitKey(100);
-
-        // POST PROCESSING
 
         return true;
     }
@@ -728,46 +664,6 @@ namespace tensorrt_rtmdet {
         cudaStreamSynchronize(*stream_);
 
         return true;
-    }
-
-    void TrtRTMDet::qsortDescentInplace(ObjectArray &face_objects, int left, int right) const {
-        int i = left;
-        int j = right;
-        float p = face_objects[(left + right) / 2].score;
-
-        while (i <= j) {
-            while (face_objects[i].score > p) {
-                i++;
-            }
-
-            while (face_objects[j].score < p) {
-                j--;
-            }
-
-            if (i <= j) {
-                // swap
-                std::swap(face_objects[i], face_objects[j]);
-
-                i++;
-                j--;
-            }
-        }
-
-#pragma omp parallel sections
-        {
-#pragma omp section
-            {
-                if (left < j) {
-                    qsortDescentInplace(face_objects, left, j);
-                }
-            }
-#pragma omp section
-            {
-                if (i < right) {
-                    qsortDescentInplace(face_objects, i, right);
-                }
-            }
-        }
     }
 
     void TrtRTMDet::readColorMap(const std::string &color_map_path) {

@@ -72,8 +72,6 @@ namespace tensorrt_rtmdet {
         bool doMultiScaleInference(
                 const cv::Mat &image, ObjectArrays &objects, const std::vector<cv::Rect> &roi);
 
-        void initPreprocessBuffer(int width, int height);
-
         void printProfiling(void);
 
 
@@ -95,16 +93,7 @@ namespace tensorrt_rtmdet {
 
         bool feedforward(const std::vector<cv::Mat> &images, ObjectArrays &objects);
 
-        void qsortDescentInplace(ObjectArray &face_objects, int left, int right) const;
-
         void readColorMap(const std::string &color_map_path);
-
-        inline void qsortDescentInplace(ObjectArray &objects) const {
-            if (objects.empty()) {
-                return;
-            }
-            qsortDescentInplace(objects, 0, objects.size() - 1);
-        }
 
         std::unique_ptr<tensorrt_common::TrtCommon> trt_common_;
 
@@ -121,7 +110,12 @@ namespace tensorrt_rtmdet {
         StreamUniquePtr stream_{makeCudaStream()};
 
         int32_t max_detections_;
-        std::vector<float> scales_;
+        float scale_width_;
+        float scale_height_;
+
+        // size of input image for model
+        int model_input_width_;
+        int model_input_height_;
 
         int num_class_;
         float score_threshold_;
