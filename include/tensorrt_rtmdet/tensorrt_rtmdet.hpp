@@ -43,6 +43,14 @@ namespace tensorrt_rtmdet {
         int stride;
     };
 
+    typedef struct LabelColor
+    {
+        std::string label;
+        cv::Vec3b color;
+    } LabelColor;
+
+    typedef std::map<int, LabelColor> ColorMap;
+
     class TrtRTMDet {
     public:
         TrtRTMDet(const std::string &model_path, const std::string &precision, const int num_class = 8,
@@ -88,6 +96,8 @@ namespace tensorrt_rtmdet {
         bool feedforward(const std::vector<cv::Mat> &images, ObjectArrays &objects);
 
         void qsortDescentInplace(ObjectArray &face_objects, int left, int right) const;
+
+        void readColorMap(const std::string &color_map_path);
 
         inline void qsortDescentInplace(ObjectArray &objects) const {
             if (objects.empty()) {
@@ -139,7 +149,7 @@ namespace tensorrt_rtmdet {
         CudaUniquePtr<Roi[]> roi_d_;
 
         // Segmentation
-        std::vector<cv::Vec3b> color_map_;
+        ColorMap color_map_;
     };
 }
 

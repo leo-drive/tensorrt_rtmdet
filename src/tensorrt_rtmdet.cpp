@@ -18,21 +18,6 @@
 #include <string>
 #include <vector>
 
-
-std::vector<std::string> coco_labels = {"person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck",
-                                        "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench",
-                                        "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra",
-                                        "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-                                        "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
-                                        "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup",
-                                        "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
-                                        "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-                                        "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse",
-                                        "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
-                                        "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
-                                        "hair drier", "toothbrush",
-};
-
 static void trimLeft(std::string &s) {
     s.erase(s.begin(), find_if(s.begin(), s.end(), [](int ch) { return !isspace(ch); }));
 }
@@ -179,21 +164,19 @@ namespace tensorrt_rtmdet {
             return;
         }
 
-        // Judge whether decoding output is required
-        // Plain models require decoding, while models with EfficientNMS_TRT module don't.
-        // If getNbBindings == 5, the model contains EfficientNMS_TRT
+        num_class_ = num_class;
+        score_threshold_ = score_threshold;
+        nms_threshold_ = nms_threshold;
 
-        // TODO: get params from config
-        num_class_ = 80;
-        score_threshold_ = 0.3;
-        nms_threshold_ = 0.3;
-
+        const auto input_dims = trt_common_->getBindingDimensions(0);
         const auto out_scores_dims = trt_common_->getBindingDimensions(3);
+
         max_detections_ = out_scores_dims.d[1];
-        input_d_ = cuda_utils::make_unique<float[]>(1 * 640 * 640 * 3);
-        out_dets_d_ = cuda_utils::make_unique<float[]>(1 * 100 * 5);
-        out_labels_d_ = cuda_utils::make_unique<int32_t[]>(1 * 100);
-        out_masks_d_ = cuda_utils::make_unique<float[]>(1 * 100 * 640 * 640);
+        input_d_ = cuda_utils::make_unique<float[]>(batch_size_ * input_dims.d[1] * input_dims.d[2] * input_dims.d[3]);
+        out_dets_d_ = cuda_utils::make_unique<float[]>(batch_size_ * max_detections_ * 5);
+        out_labels_d_ = cuda_utils::make_unique<int32_t[]>(batch_size_ * max_detections_);
+        out_masks_d_ = cuda_utils::make_unique<float[]>(
+                batch_size_ * max_detections_ * input_dims.d[2] * input_dims.d[3]);
 
         if (use_gpu_preprocess) {
             use_gpu_preprocess_ = true;
@@ -204,18 +187,7 @@ namespace tensorrt_rtmdet {
         }
 
         // Segmentation
-        int num_colors = 80;
-        color_map_ = ([num_colors]() -> std::vector<cv::Vec3b> {
-            std::vector<cv::Vec3b> colors(num_colors);
-            for (int i = 0; i < num_colors; ++i) {
-                cv::Vec3b color;
-                color[0] = rand() % 256;
-                color[1] = rand() % 256;
-                color[2] = rand() % 256;
-                colors[i] = color;
-            }
-            return colors;
-        })();
+        readColorMap("/home/bzeren/projects/labs/rtmdet/tensorrt_rtmdet_ws/onnx_model/color_map.csv");
     }
 
     TrtRTMDet::~TrtRTMDet() {
@@ -699,10 +671,11 @@ namespace tensorrt_rtmdet {
 
                 if (mask.at<uchar>(i, j) > 200) {
                     cv::Vec3b color(
-                            color_map_[out_labels[index]][0] * 0.5 + pixel[0] * 0.5,
-                            color_map_[out_labels[index]][1] * 0.5 + pixel[1] * 0.5,
-                            color_map_[out_labels[index]][2] * 0.5 + pixel[2] * 0.5
+                            color_map_[out_labels[index]].color[0] * 0.5 + pixel[0] * 0.5,
+                            color_map_[out_labels[index]].color[1] * 0.5 + pixel[1] * 0.5,
+                            color_map_[out_labels[index]].color[2] * 0.5 + pixel[2] * 0.5
                     );
+                    // TODO: check if color greater than 255
                     pixel = color;
                 }
             };
@@ -714,12 +687,12 @@ namespace tensorrt_rtmdet {
                                     static_cast<int>(out_dets[(5 * index) + 1] * (1 / 0.3440860215))),
                           cv::Point(static_cast<int>(out_dets[(5 * index) + 2] * (1 / 0.2222222222222222)),
                                     static_cast<int>(out_dets[(5 * index) + 3] * (1 / 0.3440860215))),
-                          color_map_[out_labels[index]], 2);
+                          color_map_[out_labels[index]].color, 2);
             // Write the class name
-            cv::putText(output_image, coco_labels[out_labels[index]],
+            cv::putText(output_image, color_map_[out_labels[index]].label,
                         cv::Point(static_cast<int>(out_dets[(5 * index) + 0] * (1 / 0.2222222222222222)),
                                   static_cast<int>(out_dets[(5 * index) + 1] * (1 / 0.3440860215))),
-                        cv::FONT_HERSHEY_SIMPLEX, 1, color_map_[out_labels[index]], 2);
+                        cv::FONT_HERSHEY_SIMPLEX, 1, color_map_[out_labels[index]].color, 2);
         }
 
         cv::Mat resized_image;
@@ -794,6 +767,31 @@ namespace tensorrt_rtmdet {
                     qsortDescentInplace(face_objects, i, right);
                 }
             }
+        }
+    }
+
+    void TrtRTMDet::readColorMap(const std::string &color_map_path) {
+        std::vector<std::string> color_list = loadListFromTextFile(color_map_path);
+        for (int i = 1; i < static_cast<int>(color_list.size()); i++) {
+            auto splitString = [](const std::string &str, char delimiter) -> std::vector<std::string> {
+                std::vector<std::string> result;
+                std::stringstream ss(str);
+                std::string item;
+
+                while (std::getline(ss, item, delimiter)) {
+                    result.push_back(item);
+                }
+
+                return result;
+            };
+            std::vector<std::string> tokens = splitString(color_list[i], ',');
+
+            LabelColor label_color;
+            label_color.label = tokens[1];
+            label_color.color[0] = std::stoi(tokens[2]);
+            label_color.color[1] = std::stoi(tokens[3]);
+            label_color.color[2] = std::stoi(tokens[4]);
+            color_map_[std::stoi(tokens[0])] = label_color;
         }
     }
 }
