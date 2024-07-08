@@ -84,10 +84,11 @@ std::vector<std::string> loadImageList(const std::string &filename, const std::s
 namespace tensorrt_rtmdet {
     TrtRTMDet::TrtRTMDet(const std::string &model_path, const std::string &precision,
                          const int num_class,
-                         const float score_threshold, [[maybe_unused]] const float nms_threshold,
+                         const float score_threshold, const float nms_threshold,
                          const float mask_threshold, tensorrt_common::BuildConfig build_config,
                          const bool use_gpu_preprocess, std::string calibration_image_list_path,
                          const double norm_factor,
+                         const std::vector<float> mean, const std::vector<float> std,
                          [[maybe_unused]] const std::string &cache_dir,
                          const tensorrt_common::BatchConfig &batch_config,
                          const size_t max_workspace_size, const std::string &color_map_path,
@@ -97,8 +98,8 @@ namespace tensorrt_rtmdet {
         norm_factor_ = norm_factor;
         batch_size_ = batch_config[2];
 
-        const std::vector<float> & mean_ = {103.53, 116.28, 123.675};
-        const std::vector<float> & std_ = {57.375, 57.12, 58.395};
+        std::vector<float> mean_ = mean;
+        std::vector<float> std_ = std;
 
         if (precision == "int8") {
             int max_batch_size = batch_config[2];
@@ -140,7 +141,8 @@ namespace tensorrt_rtmdet {
                         new tensorrt_rtmdet::Int8MinMaxCalibrator(stream, calibration_table, mean_, std_));
             }
             trt_common_ = std::make_unique<tensorrt_common::TrtCommon>(
-                    model_path, precision, std::move(calibrator), batch_config, max_workspace_size, build_config, plugin_paths);
+                    model_path, precision, std::move(calibrator), batch_config, max_workspace_size, build_config,
+                    plugin_paths);
         } else {
             trt_common_ = std::make_unique<tensorrt_common::TrtCommon>(
                     model_path, precision, nullptr, batch_config, max_workspace_size, build_config, plugin_paths);
@@ -548,8 +550,7 @@ namespace tensorrt_rtmdet {
         return multiScaleFeedforward(image, rois.size(), objects);
     }
 
-    bool TrtRTMDet::feedforward([[maybe_unused]] const std::vector<cv::Mat> &images,
-                                [[maybe_unused]] ObjectArrays &objects) {
+    bool TrtRTMDet::feedforward(const std::vector<cv::Mat> &images, ObjectArrays &objects) {
         std::vector<void *> buffers = {
                 input_d_.get(), out_dets_d_.get(), out_labels_d_.get(), out_masks_d_.get()};
 
@@ -574,24 +575,41 @@ namespace tensorrt_rtmdet {
         cudaStreamSynchronize(*stream_);
 
         // POST PROCESSING
-
-        // VISUALIZATION
+        objects.clear();
         for (size_t i = 0; i < batch_size; ++i) {
-            cv::Mat output_image = images[i].clone();
+            ObjectArray object_array;
             for (int index = 0; index < max_detections_; ++index) {
                 if (out_dets_h_[(5 * index) + 4] < score_threshold_) {
                     break;
                 }
-                std::cout << "score: " << out_dets_h_[(5 * index) + 4] << " " << "label: " << out_labels_h_[index]
-                          << std::endl;
+
+                Object object{};
+                object.mask_index = index;
+                object.class_id = out_labels_h_[index];
+                object.x1 = out_dets_h_[(5 * index) + 0] / scale_width_;
+                object.y1 = out_dets_h_[(5 * index) + 1] / scale_height_;
+                object.x2 = out_dets_h_[(5 * index) + 2] / scale_width_;
+                object.y2 = out_dets_h_[(5 * index) + 3] / scale_height_;
+                object.score = out_dets_h_[(5 * index) + 4];
+                object_array.push_back(object);
+            }
+            objects.push_back(object_array);
+        }
+
+        ObjectArray nms_objects;
+        nmsSortedBboxes(objects[0], nms_objects);
+
+        // VISUALIZATION
+        for (size_t i = 0; i < batch_size; ++i) {
+            cv::Mat output_image = images[i].clone();
+            for (const auto &object: nms_objects) {
+                std::cout << "score: " << object.score << " " << "label: " << object.class_id << std::endl;
 
                 cv::Mat mask(model_input_width_, model_input_height_, CV_32F,
-                             out_masks_h_.get() + index * model_input_width_ * model_input_height_);
-
+                             out_masks_h_.get() + object.mask_index * model_input_width_ * model_input_height_);
                 double minVal, maxVal;
                 cv::minMaxLoc(mask, &minVal, &maxVal);
                 mask.convertTo(mask, CV_8U, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
-
                 cv::resize(mask, mask, cv::Size(output_image.cols, output_image.rows));
 
                 auto processPixel = [&](cv::Vec3b &pixel, const int *position) -> void {
@@ -600,9 +618,9 @@ namespace tensorrt_rtmdet {
 
                     if (mask.at<uchar>(i, j) > static_cast<int>(mask_threshold_)) {
                         cv::Vec3b color(
-                                color_map_[out_labels_h_[index]].color[0] * 0.5 + pixel[0] * 0.5,
-                                color_map_[out_labels_h_[index]].color[1] * 0.5 + pixel[1] * 0.5,
-                                color_map_[out_labels_h_[index]].color[2] * 0.5 + pixel[2] * 0.5
+                                color_map_[object.class_id].color[0] * 0.5 + pixel[0] * 0.5,
+                                color_map_[object.class_id].color[1] * 0.5 + pixel[1] * 0.5,
+                                color_map_[object.class_id].color[2] * 0.5 + pixel[2] * 0.5
                         );
                         // TODO: check if color greater than 255
                         pixel = color;
@@ -610,25 +628,23 @@ namespace tensorrt_rtmdet {
                 };
                 output_image.forEach<cv::Vec3b>(processPixel);
 
-                // Draw rectangle around the object
                 cv::rectangle(output_image,
-                              cv::Point(static_cast<int>(out_dets_h_[(5 * index) + 0] * (1 / scale_width_)),
-                                        static_cast<int>(out_dets_h_[(5 * index) + 1] * (1 / scale_height_))),
-                              cv::Point(static_cast<int>(out_dets_h_[(5 * index) + 2] * (1 / scale_width_)),
-                                        static_cast<int>(out_dets_h_[(5 * index) + 3] * (1 / scale_height_))),
-                              color_map_[out_labels_h_[index]].color, 2);
+                              cv::Point(static_cast<int>(object.x1),
+                                        static_cast<int>(object.y1)),
+                              cv::Point(static_cast<int>(object.x2),
+                                        static_cast<int>(object.y2)),
+                              color_map_[object.class_id].color, 2);
                 // Write the class name
-                cv::putText(output_image, color_map_[out_labels_h_[index]].label,
-                            cv::Point(static_cast<int>(out_dets_h_[(5 * index) + 0] * (1 / scale_width_)),
-                                      static_cast<int>(out_dets_h_[(5 * index) + 1] * (1 / scale_height_))),
-                            cv::FONT_HERSHEY_SIMPLEX, 1, color_map_[out_labels_h_[index]].color, 2);
+                cv::putText(output_image, color_map_[object.class_id].label,
+                            cv::Point(static_cast<int>(object.x1),
+                                      static_cast<int>(object.y1)),
+                            cv::FONT_HERSHEY_SIMPLEX, 1, color_map_[object.class_id].color, 2);
             }
-
             cv::Mat resized_image;
             cv::resize(output_image, resized_image, cv::Size(1280, 720));
             cv::imshow("output", resized_image);
             cv::waitKey(1);
-
+            video_writer_.write(output_image);
         }
 
         return true;
@@ -681,6 +697,43 @@ namespace tensorrt_rtmdet {
             label_color.color[1] = std::stoi(tokens[3]);
             label_color.color[2] = std::stoi(tokens[4]);
             color_map_[std::stoi(tokens[0])] = label_color;
+        }
+    }
+
+    float intersectionOverUnion(const Object &a, const Object &b) {
+        int x_left = std::max(a.x1, b.x1);
+        int y_top = std::max(a.y1, b.y1);
+        int x_right = std::min(a.x2, b.x2);
+        int y_bottom = std::min(a.y2, b.y2);
+
+        if (x_right < x_left || y_bottom < y_top) {
+            return 0.0;
+        }
+
+        float intersection_area = (x_right - x_left + 1) * (y_bottom - y_top + 1);
+        float a_area = (a.x2 - a.x1 + 1) * (a.y2 - a.y1 + 1);
+        float b_area = (b.x2 - b.x1 + 1) * (b.y2 - b.y1 + 1);
+
+        return intersection_area / (a_area + b_area - intersection_area);
+    }
+
+    void TrtRTMDet::nmsSortedBboxes(const ObjectArray &input_objects, ObjectArray &output_objects) {
+        std::vector<bool> suppressed(input_objects.size(), false);
+
+        for (size_t i = 0; i < input_objects.size(); ++i) {
+            if (suppressed[i]) continue;
+
+            const Object &a = input_objects[i];
+            output_objects.push_back(a);
+
+            for (size_t j = i + 1; j < input_objects.size(); ++j) {
+                if (suppressed[j]) continue;
+
+                const Object &b = input_objects[j];
+                if (intersectionOverUnion(a, b) > nms_threshold_) {
+                    suppressed[j] = true;
+                }
+            }
         }
     }
 }

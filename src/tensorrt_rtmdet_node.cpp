@@ -30,9 +30,13 @@ namespace tensorrt_rtmdet {
         const size_t max_workspace_size = (1 << 30);
         const std::vector<std::string> plugin_paths = {pluginFile};
 
+        std::vector<float> mean = {103.53, 116.28, 123.675};
+        std::vector<float> std = {57.375, 57.12, 58.395};
+
         trt_rtmdet_ = std::make_unique<tensorrt_rtmdet::TrtRTMDet>(
                 onnxModel, precision, 80, 0.3, 0.3, 200.0, build_config,
-                true, "/home/bzeren/projects/labs/data/raw/flist.txt", norm_factor, cache_dir, batch_config, max_workspace_size, colorMapPath, plugin_paths
+                true, "/home/bzeren/projects/labs/data/raw/flist.txt", norm_factor, mean, std, cache_dir, batch_config,
+                max_workspace_size, colorMapPath, plugin_paths
         );
 
         cv::VideoCapture cap(videoFile);

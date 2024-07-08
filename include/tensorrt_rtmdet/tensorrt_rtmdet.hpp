@@ -31,20 +31,14 @@ namespace tensorrt_rtmdet {
         int32_t x2;
         int32_t y2;
         int32_t class_id;
+        int32_t mask_index;
         float score;
     };
 
     using ObjectArray = std::vector<Object>;
     using ObjectArrays = std::vector<ObjectArray>;
 
-    struct GridAndStride {
-        int grid0;
-        int grid1;
-        int stride;
-    };
-
-    typedef struct LabelColor
-    {
+    typedef struct LabelColor {
         std::string label;
         cv::Vec3b color;
     } LabelColor;
@@ -54,10 +48,13 @@ namespace tensorrt_rtmdet {
     class TrtRTMDet {
     public:
         TrtRTMDet(const std::string &model_path, const std::string &precision, const int num_class = 8,
-                  const float score_threshold = 0.3, const float nms_threshold = 0.7, const float mask_threshold = 200.0,
+                  const float score_threshold = 0.3, const float nms_threshold = 0.7,
+                  const float mask_threshold = 200.0,
                   const tensorrt_common::BuildConfig build_config = tensorrt_common::BuildConfig(),
                   const bool use_gpu_preprocess = false, std::string calibration_image_list_file = std::string(),
-                  const double norm_factor = 1.0, [[maybe_unused]] const std::string &cache_dir = "",
+                  const double norm_factor = 1.0, const std::vector<float> mean = {103.53, 116.28, 123.675},
+                  const std::vector<float> std = {57.375, 57.12, 58.395},
+                  [[maybe_unused]] const std::string &cache_dir = "",
                   const tensorrt_common::BatchConfig &batch_config = {1, 1, 1},
                   const size_t max_workspace_size = (1 << 30), const std::string &color_map_path = "",
                   const std::vector<std::string> &plugin_paths = {});
@@ -94,6 +91,8 @@ namespace tensorrt_rtmdet {
         bool feedforward(const std::vector<cv::Mat> &images, ObjectArrays &objects);
 
         void readColorMap(const std::string &color_map_path);
+
+        void nmsSortedBboxes(const ObjectArray &input_objects, ObjectArray &output_objects);
 
         std::unique_ptr<tensorrt_common::TrtCommon> trt_common_;
 
@@ -137,6 +136,9 @@ namespace tensorrt_rtmdet {
 
         int src_width_;
         int src_height_;
+
+        std::vector<float> mean_;
+        std::vector<float> std_;
 
         // host pointer for ROI
         CudaUniquePtrHost<Roi[]> roi_h_;
