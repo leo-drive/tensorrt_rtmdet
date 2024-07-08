@@ -9,6 +9,8 @@
 
 #include <rclcpp/rclcpp.hpp>
 
+#include <vector>
+
 namespace tensorrt_rtmdet {
     class TrtRTMDetNode : public rclcpp::Node {
     public:
@@ -16,6 +18,9 @@ namespace tensorrt_rtmdet {
 
     private:
         std::unique_ptr<tensorrt_rtmdet::TrtRTMDet> trt_rtmdet_;
+
+        std::vector<float> mean_;
+        std::vector<float> std_;
     };
 }
 

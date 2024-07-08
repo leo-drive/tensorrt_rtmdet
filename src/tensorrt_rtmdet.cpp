@@ -559,7 +559,7 @@ namespace tensorrt_rtmdet {
         const auto batch_size = images.size();
         out_dets_h_.reset(new float[batch_size_ * max_detections_ * 5]);
         out_labels_h_.reset(new int32_t[batch_size_ * max_detections_]);
-        out_masks_h_.reset(new float[batch_size_ * 15 * model_input_width_ * model_input_height_]);
+        out_masks_h_.reset(new float[batch_size_ * 20 * model_input_width_ * model_input_height_]);
 
         CHECK_CUDA_ERROR(cudaMemcpyAsync(
                 out_dets_h_.get(), out_dets_d_.get(), sizeof(float) * batch_size_ * max_detections_ * 5,
@@ -569,7 +569,7 @@ namespace tensorrt_rtmdet {
                 cudaMemcpyDeviceToHost, *stream_));
         CHECK_CUDA_ERROR(cudaMemcpyAsync(
                 out_masks_h_.get(), out_masks_d_.get(),
-                sizeof(float) * batch_size_ * 15 * model_input_width_ * model_input_height_,
+                sizeof(float) * batch_size_ * 20 * model_input_width_ * model_input_height_,
                 cudaMemcpyDeviceToHost, *stream_));
 
         cudaStreamSynchronize(*stream_);
@@ -616,7 +616,7 @@ namespace tensorrt_rtmdet {
                     int i = position[0];
                     int j = position[1];
 
-                    if (mask.at<uchar>(i, j) > static_cast<int>(mask_threshold_)) {
+                    if (mask.at<uchar>(i, j) > static_cast<int>(255 * mask_threshold_)) {
                         cv::Vec3b color(
                                 color_map_[object.class_id].color[0] * 0.5 + pixel[0] * 0.5,
                                 color_map_[object.class_id].color[1] * 0.5 + pixel[1] * 0.5,

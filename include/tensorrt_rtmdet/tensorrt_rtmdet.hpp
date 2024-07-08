@@ -47,7 +47,7 @@ namespace tensorrt_rtmdet {
 
     class TrtRTMDet {
     public:
-        TrtRTMDet(const std::string &model_path, const std::string &precision, const int num_class = 8,
+        TrtRTMDet(const std::string &model_path, const std::string &precision, const int num_class = 80,
                   const float score_threshold = 0.3, const float nms_threshold = 0.7,
                   const float mask_threshold = 200.0,
                   const tensorrt_common::BuildConfig build_config = tensorrt_common::BuildConfig(),
