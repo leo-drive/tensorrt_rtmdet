@@ -598,13 +598,12 @@ namespace tensorrt_rtmdet {
 
         ObjectArray nms_objects;
         nmsSortedBboxes(objects[0], nms_objects);
+        objects = {nms_objects};
 
         // VISUALIZATION
         for (size_t i = 0; i < batch_size; ++i) {
             cv::Mat output_image = images[i].clone();
             for (const auto &object: nms_objects) {
-                std::cout << "score: " << object.score << " " << "label: " << object.class_id << std::endl;
-
                 cv::Mat mask(model_input_width_, model_input_height_, CV_32F,
                              out_masks_h_.get() + object.mask_index * model_input_width_ * model_input_height_);
                 double minVal, maxVal;

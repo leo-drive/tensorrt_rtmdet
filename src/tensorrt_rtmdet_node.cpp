@@ -71,6 +71,13 @@ namespace tensorrt_rtmdet {
                 RCLCPP_WARN(this->get_logger(), "Fail to inference");
                 return;
             }
+
+            for (const auto &object : objects) {
+                for (const auto &obj : object) {
+                    std::cout << "|| Class: " << obj.class_id << " Score: " << obj.score << std::endl;
+                }
+            }
+
             std::cout << "End inference" << std::endl;
         }
 
