@@ -593,17 +593,16 @@ namespace tensorrt_rtmdet {
                 object.score = out_dets_h_[(5 * index) + 4];
                 object_array.push_back(object);
             }
-            objects.push_back(object_array);
-        }
+            ObjectArray nms_objects;
+            nmsSortedBboxes(object_array, nms_objects);
 
-        ObjectArray nms_objects;
-        nmsSortedBboxes(objects[0], nms_objects);
-        objects = {nms_objects};
+            objects.push_back(nms_objects);
+        }
 
         // VISUALIZATION
         for (size_t i = 0; i < batch_size; ++i) {
             cv::Mat output_image = images[i].clone();
-            for (const auto &object: nms_objects) {
+            for (const auto &object: objects[i]) {
                 cv::Mat mask(model_input_width_, model_input_height_, CV_32F,
                              out_masks_h_.get() + object.mask_index * model_input_width_ * model_input_height_);
                 double minVal, maxVal;
