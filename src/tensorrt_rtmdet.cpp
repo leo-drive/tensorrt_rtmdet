@@ -96,7 +96,7 @@ namespace tensorrt_rtmdet {
         src_width_ = -1;
         src_height_ = -1;
         norm_factor_ = norm_factor;
-        batch_size_ = batch_config[2];
+        batch_size_ = batch_config[1];
 
         std::vector<float> mean_ = mean;
         std::vector<float> std_ = std;
@@ -357,11 +357,8 @@ namespace tensorrt_rtmdet {
             }
             int index = b * image.cols * image.rows * 3;
             // Copy into pinned memory
-            // memcpy(&(m_h_img[index]), &image.data[0], image.cols * image.rows * 3 * sizeof(unsigned
-            // char));
-            memcpy(
-                    image_buf_h_.get() + index, &image.data[0],
-                    image.cols * image.rows * 3 * sizeof(unsigned char));
+            memcpy(&(image_buf_h_[index]), &image.data[0], image.cols * image.rows * 3 * sizeof(unsigned
+            char));
             roi_h_[b].x = rois[b].x;
             roi_h_[b].y = rois[b].y;
             roi_h_[b].w = rois[b].width;
@@ -576,21 +573,21 @@ namespace tensorrt_rtmdet {
 
         // POST PROCESSING
         objects.clear();
-        for (size_t i = 0; i < batch_size; ++i) {
+        for (size_t batch = 0; batch < batch_size; ++batch) {
             ObjectArray object_array;
             for (int index = 0; index < max_detections_; ++index) {
-                if (out_dets_h_[(5 * index) + 4] < score_threshold_) {
+                if (out_dets_h_[(batch * max_detections_ * 5) + ((5 * index) + 4)] < score_threshold_) {
                     break;
                 }
 
                 Object object{};
                 object.mask_index = index;
-                object.class_id = out_labels_h_[index];
-                object.x1 = out_dets_h_[(5 * index) + 0] / scale_width_;
-                object.y1 = out_dets_h_[(5 * index) + 1] / scale_height_;
-                object.x2 = out_dets_h_[(5 * index) + 2] / scale_width_;
-                object.y2 = out_dets_h_[(5 * index) + 3] / scale_height_;
-                object.score = out_dets_h_[(5 * index) + 4];
+                object.class_id = out_labels_h_[(batch * max_detections_) + index];
+                object.x1 = out_dets_h_[(batch * max_detections_ * 5) + ((5 * index) + 0)] / scale_width_;
+                object.y1 = out_dets_h_[(batch * max_detections_ * 5) + ((5 * index) + 1)] / scale_height_;
+                object.x2 = out_dets_h_[(batch * max_detections_ * 5) + ((5 * index) + 2)] / scale_width_;
+                object.y2 = out_dets_h_[(batch * max_detections_ * 5) + ((5 * index) + 3)] / scale_height_;
+                object.score = out_dets_h_[(batch * max_detections_ * 5) + ((5 * index) + 4)];
                 object_array.push_back(object);
             }
             ObjectArray nms_objects;
@@ -600,11 +597,14 @@ namespace tensorrt_rtmdet {
         }
 
         // VISUALIZATION
-        for (size_t i = 0; i < batch_size; ++i) {
-            cv::Mat output_image = images[i].clone();
-            for (const auto &object: objects[i]) {
-                cv::Mat mask(model_input_width_, model_input_height_, CV_32F,
-                             out_masks_h_.get() + object.mask_index * model_input_width_ * model_input_height_);
+        std::vector<cv::Mat> output_images;
+        for (size_t batch = 0; batch < batch_size; ++batch) {
+            cv::Mat output_image = images[batch].clone();
+            for (const auto &object: objects[batch]) {
+                cv::Mat mask(
+                        model_input_height_, model_input_width_, CV_32F,
+                        &out_masks_h_[(batch * 100 * model_input_width_ * model_input_height_) +
+                                      (object.mask_index * model_input_width_ * model_input_height_)]);
                 double minVal, maxVal;
                 cv::minMaxLoc(mask, &minVal, &maxVal);
                 mask.convertTo(mask, CV_8U, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
@@ -640,10 +640,23 @@ namespace tensorrt_rtmdet {
             }
             cv::Mat resized_image;
             cv::resize(output_image, resized_image, cv::Size(1280, 720));
-            cv::imshow("output", resized_image);
+            cv::imshow("debug", resized_image);
             cv::waitKey(1);
             video_writer_.write(output_image);
         }
+//        int rows = std::max(output_images[0].rows, output_images[1].rows);
+//        int cols = output_images[0].cols + output_images[1].cols;
+//        int rows = 720;
+//        int cols = 1280 * output_images.size();
+//        cv::Mat combinedImg(rows, cols, output_images[0].type());
+//        for (size_t i = 0; i < output_images.size(); i++) {
+//            output_images[i].copyTo(
+//                    combinedImg(cv::Rect(i * output_images[i].cols, 0, output_images[i].cols, output_images[i].rows)));
+//        }
+//
+//        cv::imshow("debug", combinedImg);
+//        cv::waitKey(1);
+//        video_writer_.write(combinedImg);
 
         return true;
     }
