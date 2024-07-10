@@ -92,7 +92,7 @@ namespace tensorrt_rtmdet {
 
         void readColorMap(const std::string &color_map_path);
 
-        void nmsSortedBboxes(const ObjectArray &input_objects, ObjectArray &output_objects);
+        void nmsSortedBboxes(const ObjectArray &input_objects, ObjectArray &output_objects) const;
 
         std::unique_ptr<tensorrt_common::TrtCommon> trt_common_;
 
