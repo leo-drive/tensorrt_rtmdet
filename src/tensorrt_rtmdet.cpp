@@ -597,7 +597,7 @@ namespace tensorrt_rtmdet {
         }
 
         // VISUALIZATION
-        std::vector<cv::Mat> output_images;
+//        for (size_t batch = 0; batch < batch_size; ++batch) {
         for (size_t batch = 0; batch < batch_size; ++batch) {
             cv::Mat output_image = images[batch].clone();
             for (const auto &object: objects[batch]) {

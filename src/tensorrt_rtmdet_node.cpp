@@ -10,6 +10,8 @@
 namespace tensorrt_rtmdet {
     TrtRTMDetNode::TrtRTMDetNode(const rclcpp::NodeOptions &node_options)
             : Node("tensorrt_rtmdet", node_options) {
+        using std::placeholders::_1;
+        using std::chrono_literals::operator ""ms;
 
         std::string model_path = declare_parameter<std::string>("model_path");
         std::string color_map_path = declare_parameter<std::string>("color_map_path");
@@ -27,6 +29,7 @@ namespace tensorrt_rtmdet {
         bool profile_per_layer = declare_parameter<bool>("profile_per_layer");
         double clip_value = declare_parameter<double>("clip_value");
         bool preprocess_on_gpu = declare_parameter<bool>("preprocess_on_gpu");
+//        bool is_publish_debug_image = declare_parameter<bool>("is_publish_debug_image");
         std::string calibration_image_list_path = declare_parameter<std::string>("calibration_image_list_path");
         std::vector<std::string> plugin_paths = declare_parameter<std::vector<std::string>>("plugin_paths");
 
@@ -49,38 +52,65 @@ namespace tensorrt_rtmdet {
                 max_workspace_size, color_map_path, plugin_paths
         );
 
+        timer_ = rclcpp::create_timer(this, get_clock(), 100ms, std::bind(&TrtRTMDetNode::onConnect, this));
+
+        debug_image_pub_ = image_transport::create_publisher(this, "~/out/debug_image");
+
         if (declare_parameter("build_only", false)) {
             RCLCPP_INFO(this->get_logger(), "TensorRT engine file is built and exit.");
             rclcpp::shutdown();
         }
 
-        cv::VideoCapture cap("/home/bzeren/projects/labs/rtmdet/road.mp4");
+//        cv::VideoCapture cap("/home/bzeren/projects/labs/rtmdet/road.mp4");
+//
+//        std::vector<cv::Mat> frames;
+//        while (rclcpp::ok()) {
+//            cv::Mat frame;
+//            cap >> frame;
+//            frames.push_back(frame);
+//
+//            if (frame.empty())
+//                break;
+//
+//            tensorrt_rtmdet::ObjectArrays objects;
+//            if (frames.size() == static_cast<size_t>(batch_config[1])) {
+//                if (!trt_rtmdet_->doInference(frames, objects)) {
+//                    RCLCPP_WARN(this->get_logger(), "Fail to inference");
+//                    return;
+//                }
+//                frames.clear();
+//            }
+//        }
+    }
 
-        while (rclcpp::ok()) {
-            cv::Mat frame;
-            // Capture frame-by-frame
-            cap >> frame;
+    void TrtRTMDetNode::onConnect() {
+        using std::placeholders::_1;
+//        if (debug_image_pub_.getNumSubscribers() == 0) {
+//            image_sub_.shutdown();
+//        } else if (!image_sub_) {
+//            image_sub_ = image_transport::create_subscription(
+//                    this, "~/in/image", std::bind(&TrtRTMDetNode::onImage, this, _1), "raw",
+//                    rmw_qos_profile_sensor_data);
+//        }
+        image_sub_ = image_transport::create_subscription(
+                this, "~/in/image", std::bind(&TrtRTMDetNode::onImage, this, _1), "raw",
+                rmw_qos_profile_sensor_data);
+    }
 
-            if (frame.empty())
-                break;
-
-            tensorrt_rtmdet::ObjectArrays objects;
-
-            std::cout << "Start inference" << std::endl;
-            if (!trt_rtmdet_->doInference({frame}, objects)) {
-                RCLCPP_WARN(this->get_logger(), "Fail to inference");
-                return;
-            }
-
-            for (const auto &object : objects) {
-                for (const auto &obj : object) {
-                    std::cout << "|| Class: " << obj.class_id << " Score: " << obj.score << std::endl;
-                }
-            }
-
-            std::cout << "End inference" << std::endl;
+    void TrtRTMDetNode::onImage(const sensor_msgs::msg::Image::ConstSharedPtr msg) {
+        cv_bridge::CvImagePtr in_image_ptr;
+        try {
+            in_image_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
+        } catch (cv_bridge::Exception &e) {
+            RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
+            return;
         }
 
+        tensorrt_rtmdet::ObjectArrays objects;
+        if (!trt_rtmdet_->doInference({in_image_ptr->image}, objects)) {
+            RCLCPP_WARN(this->get_logger(), "Fail to inference");
+            return;
+        }
     }
 } // namespace tensorrt_rtmdet
 
