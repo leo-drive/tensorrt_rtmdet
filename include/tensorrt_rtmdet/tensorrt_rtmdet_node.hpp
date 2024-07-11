@@ -7,6 +7,9 @@
 
 #include <autoware/universe_utils/ros/debug_publisher.hpp>
 #include <autoware/universe_utils/system/stop_watch.hpp>
+#include "tensorrt_rtmdet_msgs/msg/detected_objects_with_mask.hpp" // TODO: remove after remove customm msgs
+#include "tensorrt_rtmdet_msgs/msg/detected_object_with_mask.hpp" // TODO: remove after remove customm msgs
+#include "tier4_perception_msgs/msg/feature.hpp"
 #include "tensorrt_rtmdet/tensorrt_rtmdet.hpp"
 #include <image_transport/image_transport.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -29,6 +32,8 @@ namespace tensorrt_rtmdet {
         image_transport::Publisher debug_image_pub_;
         image_transport::Subscriber image_sub_;
         rclcpp::TimerBase::SharedPtr timer_;
+
+        rclcpp::Publisher<tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask>::SharedPtr objects_pub_;
 
         std::unique_ptr<autoware::universe_utils::StopWatch<std::chrono::milliseconds>> stop_watch_ptr_;
         std::unique_ptr<autoware::universe_utils::DebugPublisher> debug_publisher_;

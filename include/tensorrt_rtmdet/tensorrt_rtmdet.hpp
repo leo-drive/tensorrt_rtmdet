@@ -8,10 +8,13 @@
 #include "tensorrt_rtmdet/calibrator.hpp"
 #include "tensorrt_rtmdet/preprocess.hpp"
 #include "tensorrt_rtmdet/postprocess.hpp"
+#include "tensorrt_rtmdet_msgs/msg/detected_objects_with_mask.hpp" // TODO: remove after remove customm msgs
+#include "tensorrt_rtmdet_msgs/msg/detected_object_with_mask.hpp" // TODO: remove after remove customm msgs
 
 #include <cuda_utils/cuda_unique_ptr.hpp>
 #include <cuda_utils/stream_unique_ptr.hpp>
 #include <opencv2/opencv.hpp>
+#include <cv_bridge/cv_bridge.h>
 
 #include <tensorrt_common/tensorrt_common.hpp>
 
@@ -61,10 +64,12 @@ namespace tensorrt_rtmdet {
 
         ~TrtRTMDet();
 
-        bool doInference(const std::vector<cv::Mat> &images, ObjectArrays &objects);
+        bool doInference(const std::vector<cv::Mat> &images, ObjectArrays &objects,
+                         tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask);
 
         bool doInferenceWithRoi(
-                const std::vector<cv::Mat> &images, ObjectArrays &objects, const std::vector<cv::Rect> &roi);
+                const std::vector<cv::Mat> &images, ObjectArrays &objects, const std::vector<cv::Rect> &roi,
+                tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask);
 
         bool doMultiScaleInference(
                 const cv::Mat &image, ObjectArrays &objects, const std::vector<cv::Rect> &roi);
@@ -88,7 +93,8 @@ namespace tensorrt_rtmdet {
 
         bool multiScaleFeedforward(const cv::Mat &image, int batch_size, ObjectArrays &objects);
 
-        bool feedforward(const std::vector<cv::Mat> &images, ObjectArrays &objects);
+        bool feedforward(const std::vector<cv::Mat> &images, ObjectArrays &objects,
+                         tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask);
 
         void readColorMap(const std::string &color_map_path);
 

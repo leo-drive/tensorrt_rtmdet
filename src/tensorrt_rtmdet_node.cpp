@@ -62,33 +62,15 @@ namespace tensorrt_rtmdet {
 
         timer_ = rclcpp::create_timer(this, get_clock(), 100ms, std::bind(&TrtRTMDetNode::onConnect, this));
 
+        objects_pub_ = this->create_publisher<tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask>(
+                "~/out/objects", 1);
+
         debug_image_pub_ = image_transport::create_publisher(this, "~/out/debug_image");
 
         if (declare_parameter("build_only", false)) {
             RCLCPP_INFO(this->get_logger(), "TensorRT engine file is built and exit.");
             rclcpp::shutdown();
         }
-
-//        cv::VideoCapture cap("/home/bzeren/projects/labs/rtmdet/road.mp4");
-//
-//        std::vector<cv::Mat> frames;
-//        while (rclcpp::ok()) {
-//            cv::Mat frame;
-//            cap >> frame;
-//            frames.push_back(frame);
-//
-//            if (frame.empty())
-//                break;
-//
-//            tensorrt_rtmdet::ObjectArrays objects;
-//            if (frames.size() == static_cast<size_t>(batch_config[1])) {
-//                if (!trt_rtmdet_->doInference(frames, objects)) {
-//                    RCLCPP_WARN(this->get_logger(), "Fail to inference");
-//                    return;
-//                }
-//                frames.clear();
-//            }
-//        }
     }
 
     void TrtRTMDetNode::onConnect() {
@@ -117,9 +99,17 @@ namespace tensorrt_rtmdet {
         }
 
         tensorrt_rtmdet::ObjectArrays objects;
-        if (!trt_rtmdet_->doInference({in_image_ptr->image}, objects)) {
+        tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask detected_objects_with_mask;
+        if (!trt_rtmdet_->doInference({in_image_ptr->image}, objects, detected_objects_with_mask)) {
             RCLCPP_WARN(this->get_logger(), "Fail to inference");
             return;
+        }
+
+        objects_pub_->publish(detected_objects_with_mask);
+
+        for (const auto &object : detected_objects_with_mask.detected_objects) {
+            debug_image_pub_.publish(object.mask);
+            break;
         }
 
         if (debug_publisher_) {

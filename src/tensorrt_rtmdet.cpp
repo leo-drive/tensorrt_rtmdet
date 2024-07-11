@@ -297,7 +297,8 @@ namespace tensorrt_rtmdet {
         // No Need for Sync
     }
 
-    bool TrtRTMDet::doInference(const std::vector<cv::Mat> &images, ObjectArrays &objects) {
+    bool TrtRTMDet::doInference(const std::vector<cv::Mat> &images, ObjectArrays &objects,
+                                tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask) {
         if (!trt_common_->isInitialized()) {
             return false;
         }
@@ -307,7 +308,7 @@ namespace tensorrt_rtmdet {
         } else {
             preprocess(images);
         }
-        return feedforward(images, objects);
+        return feedforward(images, objects, detected_objects_with_mask);
     }
 
     void TrtRTMDet::preprocessWithRoiGpu(
@@ -521,7 +522,8 @@ namespace tensorrt_rtmdet {
     }
 
     bool TrtRTMDet::doInferenceWithRoi(
-            const std::vector<cv::Mat> &images, ObjectArrays &objects, const std::vector<cv::Rect> &rois) {
+            const std::vector<cv::Mat> &images, ObjectArrays &objects, const std::vector<cv::Rect> &rois,
+            tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask) {
         if (!trt_common_->isInitialized()) {
             return false;
         }
@@ -530,7 +532,7 @@ namespace tensorrt_rtmdet {
         } else {
             preprocessWithRoi(images, rois);
         }
-        return feedforward(images, objects);
+        return feedforward(images, objects, detected_objects_with_mask);
     }
 
     bool TrtRTMDet::doMultiScaleInference(
@@ -547,7 +549,8 @@ namespace tensorrt_rtmdet {
         return multiScaleFeedforward(image, rois.size(), objects);
     }
 
-    bool TrtRTMDet::feedforward(const std::vector<cv::Mat> &images, ObjectArrays &objects) {
+    bool TrtRTMDet::feedforward(const std::vector<cv::Mat> &images, ObjectArrays &objects,
+                                tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask) {
         std::vector<void *> buffers = {
                 input_d_.get(), out_dets_d_.get(), out_labels_d_.get(), out_masks_d_.get()};
 
@@ -596,8 +599,50 @@ namespace tensorrt_rtmdet {
             objects.push_back(nms_objects);
         }
 
+        for (size_t batch = 0; batch < batch_size; ++batch) {
+            for (const auto &object: objects[batch]) {
+                tensorrt_rtmdet_msgs::msg::DetectedObjectWithMask detected_object_with_mask;
+                detected_object_with_mask.box.width = object.x2 - object.x1;
+                detected_object_with_mask.box.height = object.y2 - object.y1;
+                detected_object_with_mask.box.x_offset = object.x1;
+                detected_object_with_mask.box.y_offset = object.y1;
+                detected_object_with_mask.class_id = object.class_id;
+                detected_object_with_mask.class_name = color_map_[object.class_id].label;
+                detected_object_with_mask.score = object.score;
+
+                cv::Mat mask(
+                        model_input_height_, model_input_width_, CV_32F,
+                        &out_masks_h_[(batch * 20 * model_input_width_ * model_input_height_) +
+                                      (object.mask_index * model_input_width_ * model_input_height_)]);
+                double minVal, maxVal;
+                cv::minMaxLoc(mask, &minVal, &maxVal);
+                mask.convertTo(mask, CV_8U, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
+                sensor_msgs::msg::Image::SharedPtr mask_msg = cv_bridge::CvImage(
+                        std_msgs::msg::Header(), "mono8", mask).toImageMsg();
+                detected_object_with_mask.mask = *mask_msg;
+
+//                sensor_msgs::msg::Image::SharedPtr mask = cv_bridge::CvImage(
+//                        std_msgs::msg::Header(), "mono8",
+//                        cv::Mat(model_input_height_, model_input_width_, CV_8UC1,
+//                                &out_masks_h_[(batch * 20 * model_input_width_ * model_input_height_) +
+//                                              (object.mask_index * model_input_width_ * model_input_height_)]))
+//                        .toImageMsg();
+//                detected_object_with_mask.mask = *mask;
+
+//                detected_object_with_mask.mask.width = model_input_width_;
+//                detected_object_with_mask.mask.height = model_input_height_;
+//                detected_object_with_mask.mask.encoding = "mono8";
+//                detected_object_with_mask.mask.step = model_input_width_;
+//                detected_object_with_mask.mask.data = std::vector<uint8_t>(
+//                        &out_masks_h_[(batch * 20 * model_input_width_ * model_input_height_) +
+//                                      (object.mask_index * model_input_width_ * model_input_height_)],
+//                        &out_masks_h_[(batch * 20 * model_input_width_ * model_input_height_) +
+//                                      ((object.mask_index + 1) * model_input_width_ * model_input_height_)]);
+                detected_objects_with_mask.detected_objects.push_back(detected_object_with_mask);
+            }
+        }
+
         // VISUALIZATION
-//        for (size_t batch = 0; batch < batch_size; ++batch) {
         for (size_t batch = 0; batch < batch_size; ++batch) {
             cv::Mat output_image = images[batch].clone();
             for (const auto &object: objects[batch]) {
@@ -644,20 +689,6 @@ namespace tensorrt_rtmdet {
             cv::waitKey(1);
             video_writer_.write(output_image);
         }
-//        int rows = std::max(output_images[0].rows, output_images[1].rows);
-//        int cols = output_images[0].cols + output_images[1].cols;
-//        int rows = 720;
-//        int cols = 1280 * output_images.size();
-//        cv::Mat combinedImg(rows, cols, output_images[0].type());
-//        for (size_t i = 0; i < output_images.size(); i++) {
-//            output_images[i].copyTo(
-//                    combinedImg(cv::Rect(i * output_images[i].cols, 0, output_images[i].cols, output_images[i].rows)));
-//        }
-//
-//        cv::imshow("debug", combinedImg);
-//        cv::waitKey(1);
-//        video_writer_.write(combinedImg);
-
         return true;
     }
 
@@ -728,7 +759,7 @@ namespace tensorrt_rtmdet {
         return intersection_area / (a_area + b_area - intersection_area);
     }
 
-    void TrtRTMDet::nmsSortedBboxes(const ObjectArray &input_objects, ObjectArray &output_objects) {
+    void TrtRTMDet::nmsSortedBboxes(const ObjectArray &input_objects, ObjectArray &output_objects) const {
         std::vector<bool> suppressed(input_objects.size(), false);
 
         for (size_t i = 0; i < input_objects.size(); ++i) {
