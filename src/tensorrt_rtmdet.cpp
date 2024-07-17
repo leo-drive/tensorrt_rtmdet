@@ -607,7 +607,7 @@ namespace tensorrt_rtmdet {
                 detected_object_with_mask.box.x_offset = object.x1;
                 detected_object_with_mask.box.y_offset = object.y1;
                 detected_object_with_mask.class_id = object.class_id;
-                detected_object_with_mask.class_name = color_map_[object.class_id].label;
+                detected_object_with_mask.class_name = color_map_[object.class_id].class_name;
                 detected_object_with_mask.score = object.score;
 
                 cv::Mat mask(
@@ -621,23 +621,9 @@ namespace tensorrt_rtmdet {
                         std_msgs::msg::Header(), "mono8", mask).toImageMsg();
                 detected_object_with_mask.mask = *mask_msg;
 
-//                sensor_msgs::msg::Image::SharedPtr mask = cv_bridge::CvImage(
-//                        std_msgs::msg::Header(), "mono8",
-//                        cv::Mat(model_input_height_, model_input_width_, CV_8UC1,
-//                                &out_masks_h_[(batch * 20 * model_input_width_ * model_input_height_) +
-//                                              (object.mask_index * model_input_width_ * model_input_height_)]))
-//                        .toImageMsg();
-//                detected_object_with_mask.mask = *mask;
+//                std::vector<std::vector<cv::Point>> contours;
+//                cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-//                detected_object_with_mask.mask.width = model_input_width_;
-//                detected_object_with_mask.mask.height = model_input_height_;
-//                detected_object_with_mask.mask.encoding = "mono8";
-//                detected_object_with_mask.mask.step = model_input_width_;
-//                detected_object_with_mask.mask.data = std::vector<uint8_t>(
-//                        &out_masks_h_[(batch * 20 * model_input_width_ * model_input_height_) +
-//                                      (object.mask_index * model_input_width_ * model_input_height_)],
-//                        &out_masks_h_[(batch * 20 * model_input_width_ * model_input_height_) +
-//                                      ((object.mask_index + 1) * model_input_width_ * model_input_height_)]);
                 detected_objects_with_mask.detected_objects.push_back(detected_object_with_mask);
             }
         }
@@ -678,7 +664,7 @@ namespace tensorrt_rtmdet {
                                         static_cast<int>(object.y2)),
                               color_map_[object.class_id].color, 2);
                 // Write the class name
-                cv::putText(output_image, color_map_[object.class_id].label,
+                cv::putText(output_image, color_map_[object.class_id].class_name,
                             cv::Point(static_cast<int>(object.x1),
                                       static_cast<int>(object.y1)),
                             cv::FONT_HERSHEY_SIMPLEX, 1, color_map_[object.class_id].color, 2);
@@ -734,10 +720,11 @@ namespace tensorrt_rtmdet {
             std::vector<std::string> tokens = splitString(color_list[i], ',');
 
             LabelColor label_color;
-            label_color.label = tokens[1];
+            label_color.class_name = tokens[1];
             label_color.color[0] = std::stoi(tokens[2]);
             label_color.color[1] = std::stoi(tokens[3]);
             label_color.color[2] = std::stoi(tokens[4]);
+            label_color.label_id = std::stoi(tokens[5]);
             color_map_[std::stoi(tokens[0])] = label_color;
         }
     }

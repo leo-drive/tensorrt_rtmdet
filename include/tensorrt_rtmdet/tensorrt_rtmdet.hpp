@@ -42,8 +42,9 @@ namespace tensorrt_rtmdet {
     using ObjectArrays = std::vector<ObjectArray>;
 
     typedef struct LabelColor {
-        std::string label;
+        std::string class_name;
         cv::Vec3b color;
+        uint8_t label_id;
     } LabelColor;
 
     typedef std::map<int, LabelColor> ColorMap;
