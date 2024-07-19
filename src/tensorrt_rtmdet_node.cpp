@@ -62,7 +62,7 @@ namespace tensorrt_rtmdet {
 
         timer_ = rclcpp::create_timer(this, get_clock(), 100ms, std::bind(&TrtRTMDetNode::onConnect, this));
 
-        objects_pub_ = this->create_publisher<tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask>(
+        objects_pub_ = this->create_publisher<tier4_perception_msgs::msg::DetectedObjectsWithMask>(
                 "~/out/objects", 1);
 
         debug_image_pub_ = image_transport::create_publisher(this, "~/out/debug_image");
@@ -99,12 +99,13 @@ namespace tensorrt_rtmdet {
         }
 
         tensorrt_rtmdet::ObjectArrays objects;
-        tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask detected_objects_with_mask;
+        tier4_perception_msgs::msg::DetectedObjectsWithMask detected_objects_with_mask;
         if (!trt_rtmdet_->doInference({in_image_ptr->image}, objects, detected_objects_with_mask)) {
             RCLCPP_WARN(this->get_logger(), "Fail to inference");
             return;
         }
 
+        detected_objects_with_mask.header = msg->header;
         objects_pub_->publish(detected_objects_with_mask);
 
         for (const auto &object : detected_objects_with_mask.detected_objects) {

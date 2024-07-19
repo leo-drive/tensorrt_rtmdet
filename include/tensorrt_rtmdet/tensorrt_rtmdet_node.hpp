@@ -7,8 +7,8 @@
 
 #include <autoware/universe_utils/ros/debug_publisher.hpp>
 #include <autoware/universe_utils/system/stop_watch.hpp>
-#include "tensorrt_rtmdet_msgs/msg/detected_objects_with_mask.hpp" // TODO: remove after remove customm msgs
-#include "tensorrt_rtmdet_msgs/msg/detected_object_with_mask.hpp" // TODO: remove after remove customm msgs
+#include "tier4_perception_msgs/msg/detected_objects_with_mask.hpp"
+#include "tier4_perception_msgs/msg/detected_object_with_mask.hpp"
 #include "tier4_perception_msgs/msg/feature.hpp"
 #include "tensorrt_rtmdet/tensorrt_rtmdet.hpp"
 #include <image_transport/image_transport.hpp>

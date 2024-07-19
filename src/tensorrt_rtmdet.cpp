@@ -298,7 +298,7 @@ namespace tensorrt_rtmdet {
     }
 
     bool TrtRTMDet::doInference(const std::vector<cv::Mat> &images, ObjectArrays &objects,
-                                tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask) {
+                                tier4_perception_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask) {
         if (!trt_common_->isInitialized()) {
             return false;
         }
@@ -523,7 +523,7 @@ namespace tensorrt_rtmdet {
 
     bool TrtRTMDet::doInferenceWithRoi(
             const std::vector<cv::Mat> &images, ObjectArrays &objects, const std::vector<cv::Rect> &rois,
-            tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask) {
+            tier4_perception_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask) {
         if (!trt_common_->isInitialized()) {
             return false;
         }
@@ -550,7 +550,7 @@ namespace tensorrt_rtmdet {
     }
 
     bool TrtRTMDet::feedforward(const std::vector<cv::Mat> &images, ObjectArrays &objects,
-                                tensorrt_rtmdet_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask) {
+                                tier4_perception_msgs::msg::DetectedObjectsWithMask &detected_objects_with_mask) {
         std::vector<void *> buffers = {
                 input_d_.get(), out_dets_d_.get(), out_labels_d_.get(), out_masks_d_.get()};
 
@@ -601,15 +601,16 @@ namespace tensorrt_rtmdet {
 
         for (size_t batch = 0; batch < batch_size; ++batch) {
             for (const auto &object: objects[batch]) {
-                tensorrt_rtmdet_msgs::msg::DetectedObjectWithMask detected_object_with_mask;
-                detected_object_with_mask.box.width = object.x2 - object.x1;
-                detected_object_with_mask.box.height = object.y2 - object.y1;
-                detected_object_with_mask.box.x_offset = object.x1;
-                detected_object_with_mask.box.y_offset = object.y1;
-                detected_object_with_mask.class_id = object.class_id;
-                detected_object_with_mask.class_name = color_map_[object.class_id].class_name;
-                detected_object_with_mask.score = object.score;
-
+                tier4_perception_msgs::msg::DetectedObjectWithMask detected_object_with_mask;
+                detected_object_with_mask.feature.roi.width = object.x2 - object.x1;
+                detected_object_with_mask.feature.roi.height = object.y2 - object.y1;
+                detected_object_with_mask.feature.roi.x_offset = object.x1;
+                detected_object_with_mask.feature.roi.y_offset = object.y1;
+                autoware_perception_msgs::msg::ObjectClassification classification;
+                classification.label = object.class_id;
+                classification.probability = object.score;
+                detected_object_with_mask.object.classification = std::vector<autoware_perception_msgs::msg::ObjectClassification>{
+                        classification};
                 cv::Mat mask(
                         model_input_height_, model_input_width_, CV_32F,
                         &out_masks_h_[(batch * 20 * model_input_width_ * model_input_height_) +
@@ -624,7 +625,7 @@ namespace tensorrt_rtmdet {
 //                std::vector<std::vector<cv::Point>> contours;
 //                cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-                detected_objects_with_mask.detected_objects.push_back(detected_object_with_mask);
+                detected_objects_with_mask.feature_objects.push_back(detected_object_with_mask);
             }
         }
 
